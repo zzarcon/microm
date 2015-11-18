@@ -1,0 +1,45 @@
+{
+  "name": "microm",
+  "version": "0.1.0",
+  "description": "Beautiful library to convert browser microphone to mp3 in Javascript",
+  "main": "./dist/microm.js",
+  "scripts": {
+    "start": "npm run serve | npm run dev",
+    "serve": "./node_modules/.bin/http-server -p 8080",
+    "dev": "webpack-dev-server --progress --colors --port 8090",
+    "watch": "webpack --progress --colors --watch",
+    "build": "node_modules/webpack/bin/webpack.js",
+    "amend": "git add . && git commit --amend --reuse-message=HEAD",
+    "push": "git push --tags && git push",
+    "release": "bower version patch -f && npm version patch --force --no-git-tag-version && npm run build && npm run amend && npm run push && npm publish"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zzarcon/microm.git"
+  },
+  "keywords": [
+    "microphone",
+    "micro",
+    "mp3",
+    "convert",
+    "converter",
+    "audio",
+    "microm"
+  ],
+  "author": "zzarcon",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/zzarcon/microm/issues"
+  },
+  "homepage": "https://github.com/zzarcon/microm",
+  "dependencies": {
+    "rsvp": "^3.1.0"
+  },
+  "devDependencies": {
+    "babel-core": "^5.4.3",
+    "babel-loader": "^5.1.2",
+    "http-server": "~0.7.1",
+    "webpack": "~1.4.4",
+    "webpack-dev-server": "~1.6.5"
+  }
+}
