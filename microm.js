@@ -13,7 +13,7 @@ class Microm {
 
   startRecording() {
     this.isRecording = true;
-    media = navigator.mediaDevices.getUserMedia({audio: true})
+    var media = navigator.mediaDevices.getUserMedia({audio: true})
 
     media.then(this.startUserMedia.bind(this)).catch(this.onUserMediaError.bind(this));    
     return media;

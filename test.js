@@ -1,8 +1,9 @@
 (function() {
   window.onload = ready;
+  var microm;
 
   function ready() {
-    var microm = new Microm();
+    microm = new Microm();
 
     document.querySelector('#record').addEventListener('click', onRecord);
     document.querySelector('#play').addEventListener('click', onPlay);
@@ -32,8 +33,9 @@
     microm.stop();
   }
   function onGetMp3() {
-    console.log('onGetMp3');
-    microm.getMp3();
+    microm.getMp3().then(function(mp3) {
+      console.log('onGetMp3', mp3);
+    });
   }
   function onGetWav() {
     console.log('onGetWav');
