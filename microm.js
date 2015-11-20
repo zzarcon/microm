@@ -34,6 +34,8 @@ class Microm {
         self.getMp3().then((mp3) => {
           self.mp3 = mp3;
           self.player = new Player(mp3.url);
+
+          resolve(mp3);
         })
       });
     });
@@ -50,6 +52,7 @@ class Microm {
     if (!this.isPlaying) return;
 
     this.isPlaying = false;
+    this.player.pause();
   }
 
   stop() {
@@ -60,6 +63,12 @@ class Microm {
     this.isPlaying && this.pause(0);
   }
 
+  /**
+   * Returns all mp3 info.
+   * Right now we are converting the recorded data
+   * everytime this function it's called.
+   * @return {Promise} 
+   */
   getMp3() {
     var blob = this.recordRTC.getBlob();
     // TODO: trow error if we don't have recordedData yet
@@ -70,10 +79,46 @@ class Microm {
 
   }
 
+  getUrl() {
+    // TODO: trow error if mp3 is not ready
+    return this.mp3.url;
+  }
+
+  getBlob() {
+    // TODO: trow error if mp3 is not ready
+    return this.mp3.blob;
+  }
+
+  getBuffer() {
+    // TODO: trow error if mp3 is not ready
+    return this.mp3.buffer;
+  }
+
+  getBase64() {
+    // TODO: trow error if mp3 is not ready
+    return this.converter.toBase64(this.getBlob());
+  }
+  
+  /**
+   * Forces file download
+   * @param  {String} fileName 
+   * @return {void}
+   */
+  download(fileName = 'micro_record') {
+    var link = document.createElement('a');
+    var click = document.createEvent("Event");
+
+    link.href = this.getUrl();
+    link.download = `${fileName}.mp3`;
+
+    click.initEvent("click", true, true);
+    link.dispatchEvent(click);
+  }
+
   startUserMedia(stream) {
     var recordRTC = RecordRTC(stream, {type: 'audio'})
     recordRTC.startRecording();
-    
+      
     this.recordRTC = recordRTC;
     this.isRecording = true;
   }
