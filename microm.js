@@ -2,12 +2,15 @@ var adapter = require("./bower_components/webrtc-adapter/adapter.js");
 var RecordRTC = require("./bower_components/recordrtc/RecordRTC.js");
 var Promise = require('rsvp').Promise;
 var Converter = require('./lib/converter');
+var Player = require('./lib/player');
 
 class Microm {
   constructor() {
     this.isRecording = false;
     this.isPlaying = false;
     this.recordRTC = null;
+    this.player = null;
+    this.mp3 = null;
     this.converter = new Converter();
   }
 
@@ -20,8 +23,17 @@ class Microm {
   }
 
   stopRecording() {
+    var self = this;
     this.isRecording = false;
-    this.recordRTC.stopRecording();
+
+    return new Promise((resolve, reject) => {
+      self.recordRTC.stopRecording(() => {
+        self.getMp3().then((mp3) => {
+          self.mp3 = mp3;
+          self.player = new Player(mp3.url);
+        })
+      });
+    });
   }
 
   play() {
@@ -38,8 +50,7 @@ class Microm {
 
   stop() {
     if (this.isRecording) {
-      this.stopRecording();
-      return;
+      return this.stopRecording();
     }
 
     this.isPlaying && this.pause(0);

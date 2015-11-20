@@ -29,12 +29,13 @@
     microm.pause();
   }
   function onStop() {
-    console.log('onStop');
-    microm.stop();
+    microm.stop().then(function() {
+      console.log('onStop');
+    });
   }
   function onGetMp3() {
     microm.getMp3().then(function(mp3) {
-      console.log('onGetMp3', mp3);
+      console.log('onGetMp3', mp3.url);
     });
   }
   function onGetWav() {
