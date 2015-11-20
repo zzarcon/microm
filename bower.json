@@ -15,7 +15,7 @@
     "tests"
   ],
   "dependencies": {
-    "lamejs": "git://github.com/zhuker/lamejs.git#a2822267a29fe77f6a7399fb7db3cbd67342f1ad",
+    "lamejs": "git://github.com/zzarcon/lamejs.git#master",
     "webrtc-adapter": "~0.2.5",
     "recordrtc": "~5.2.3"
   }
