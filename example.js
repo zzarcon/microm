@@ -1,9 +1,9 @@
 (function() {
   window.onload = ready;
-  var microm;
+  window.microm = null;
 
   function ready() {
-    microm = new Microm();
+    window.microm = new Microm();
 
     document.querySelector('#record').addEventListener('click', onRecord);
     document.querySelector('#play').addEventListener('click', onPlay);
@@ -11,6 +11,7 @@
     document.querySelector('#stop').addEventListener('click', onStop);
     document.querySelector('#get-mp3').addEventListener('click', onGetMp3);
     document.querySelector('#get-wav').addEventListener('click', onGetWav);
+    document.querySelector('#download').addEventListener('click', onDownload);
   }
 
   function onRecord() {
@@ -29,18 +30,20 @@
     microm.pause();
   }
   function onStop() {
-    microm.stop().then(function() {
-      console.log('onStop');
+    microm.stop().then(function(mp3) {
+      console.log('onStop', mp3);
     });
   }
   function onGetMp3() {
     microm.getMp3().then(function(mp3) {
-      console.log('onGetMp3', mp3.url);
+      console.log('onGetMp3', mp3);
     });
   }
   function onGetWav() {
     console.log('onGetWav');
     microm.getWav();
   }
-
+  function onDownload() {
+    microm.download('microm');
+  }
 })();
