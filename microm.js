@@ -17,6 +17,12 @@ class Microm {
     this.converter = new Converter();
   }
 
+  /**
+   * Request browser microphone access and waits for it resolution.
+   * If the user grant access, Microm will start recording the audio.
+   * 
+   * @return {Promise} 
+   */
   startRecording() {
     this.isRecording = true;
     var media = navigator.mediaDevices.getUserMedia({audio: true})
@@ -41,6 +47,11 @@ class Microm {
     });
   }
 
+  /**
+   * Reproduce the player audio.
+   * 
+   * @return {void}
+   */
   play() {
     if (this.isPlaying) return;
 
@@ -48,25 +59,42 @@ class Microm {
     this.player.play();
   }
 
-  pause(currentTime) {
+  /**
+   * Pauses the player.
+   * 
+   * @return {void}
+   */
+  pause() {
     if (!this.isPlaying) return;
 
     this.isPlaying = false;
     this.player.pause();
   }
 
+  /**
+   * Stops recording audio if Micron is recording, if not
+   * just pauses the player and set's the currentTime to 0.
+   *
+   * @example
+   *   microm.stop().then(function(mp3) {
+   *    console.log(mp3.url, mp3.blob);
+   *   });
+   *   
+   * @return {Promise} Will be resolved with the mp3.
+   */
   stop() {
     if (this.isRecording) {
       return this.stopRecording();
     }
 
-    this.isPlaying && this.pause(0);
+    this.isPlaying && this.player.stop();
   }
 
   /**
    * Returns all mp3 info.
    * Right now we are converting the recorded data
    * everytime this function it's called.
+   * 
    * @return {Promise} 
    */
   getMp3() {
@@ -75,33 +103,70 @@ class Microm {
     return this.converter.toMp3(blob);
   }
 
+  /**
+   * Blob enconded as Wav.
+   * 
+   * @return {Blob} 
+   */
   getWav() {
 
   }
 
+  /**
+   * Link to the mp3.
+   * It can be used as a audio "src" value
+   *
+   * @example
+   *   microm.getUrl();
+   *   // Something like --> "blob:http%3A//localhost%3A8090/8b40fc63-8bb7-42e3-9622-9dcc59e5df8f"
+   *   
+   * @return {String} 
+   */
   getUrl() {
     // TODO: trow error if mp3 is not ready
     return this.mp3.url;
   }
 
+  /**
+   * Blob value of the recorded data.
+   * 
+   * @return {Blob} 
+   */
   getBlob() {
     // TODO: trow error if mp3 is not ready
     return this.mp3.blob;
   }
 
+  /**
+   * ArrayBuffer of the recorded data (raw binary data buffer).
+   * 
+   * @return {ArrayBuffer} 
+   */
   getBuffer() {
     // TODO: trow error if mp3 is not ready
     return this.mp3.buffer;
   }
 
+  /**
+   * Base64 value of the recorded data.
+   *
+   * @example
+   *   microm.getBase64().then(function(base64) {
+   *     console.log(base64);
+   *   });
+   *   
+   * @return {Promise}
+   */
   getBase64() {
     // TODO: trow error if mp3 is not ready
     return this.converter.toBase64(this.getBlob());
   }
-  
+
   /**
-   * Forces file download
+   * Forces file download.
+   * 
    * @param  {String} fileName 
+   * 
    * @return {void}
    */
   download(fileName = 'micro_record') {

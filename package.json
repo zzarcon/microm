@@ -8,6 +8,7 @@
     "serve": "./node_modules/.bin/http-server -p 8080",
     "dev": "webpack-dev-server --progress --colors --port 8090",
     "watch": "webpack --progress --colors --watch",
+    "docs": "./node_modules/.bin/documentation microm.js --name -f md -o md/docs.md --shallow && cat md/intro.md > README.md && cat md/docs.md >> README.md",
     "build": "node_modules/webpack/bin/webpack.js",
     "amend": "git add . && git commit --amend --reuse-message=HEAD",
     "push": "git push --tags && git push",
@@ -39,6 +40,7 @@
   "devDependencies": {
     "babel-core": "^5.4.3",
     "babel-loader": "^5.1.2",
+    "documentation": "^3.0.4",
     "http-server": "~0.7.1",
     "webpack": "~1.4.4",
     "webpack-dev-server": "~1.6.5"
