@@ -60,31 +60,98 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
-	var lame = __webpack_require__(1);
-	var adapter = __webpack_require__(2);
-	var RecordRTC = __webpack_require__(3);
-	var RSVP = __webpack_require__(4);
-	var Promise = RSVP.Promise;
+	var adapter = __webpack_require__(4);
+	var RecordRTC = __webpack_require__(5);
+	var Promise = __webpack_require__(6).Promise;
+	var Converter = __webpack_require__(1);
+	var Player = __webpack_require__(2);
+	var config = __webpack_require__(3);
+
+	config.setup();
 
 	var Microm = (function () {
 	  function Microm() {
 	    _classCallCheck(this, Microm);
 
 	    this.isRecording = false;
+	    this.isPlaying = false;
+	    this.recordRTC = null;
+	    this.player = null;
+	    this.mp3 = null;
+	    this.converter = new Converter();
 	  }
 
 	  _createClass(Microm, [{
 	    key: "startRecording",
 	    value: function startRecording() {
-	      console.log('record');
 	      this.isRecording = true;
+	      var media = navigator.mediaDevices.getUserMedia({ audio: true });
 
-	      return new Promise(function (resolve, reject) {});
+	      media.then(this.startUserMedia.bind(this))["catch"](this.onUserMediaError.bind(this));
+	      return media;
 	    }
 	  }, {
 	    key: "stopRecording",
 	    value: function stopRecording() {
+	      var self = this;
 	      this.isRecording = false;
+
+	      return new Promise(function (resolve, reject) {
+	        self.recordRTC.stopRecording(function () {
+	          self.getMp3().then(function (mp3) {
+	            self.mp3 = mp3;
+	            self.player = new Player(mp3.url);
+	          });
+	        });
+	      });
+	    }
+	  }, {
+	    key: "play",
+	    value: function play() {
+	      if (this.isPlaying) return;
+
+	      this.isPlaying = true;
+	      this.player.play();
+	    }
+	  }, {
+	    key: "pause",
+	    value: function pause(currentTime) {
+	      if (!this.isPlaying) return;
+
+	      this.isPlaying = false;
+	    }
+	  }, {
+	    key: "stop",
+	    value: function stop() {
+	      if (this.isRecording) {
+	        return this.stopRecording();
+	      }
+
+	      this.isPlaying && this.pause(0);
+	    }
+	  }, {
+	    key: "getMp3",
+	    value: function getMp3() {
+	      var blob = this.recordRTC.getBlob();
+	      // TODO: trow error if we don't have recordedData yet
+	      return this.converter.toMp3(blob);
+	    }
+	  }, {
+	    key: "getWav",
+	    value: function getWav() {}
+	  }, {
+	    key: "startUserMedia",
+	    value: function startUserMedia(stream) {
+	      var recordRTC = RecordRTC(stream, { type: 'audio' });
+	      recordRTC.startRecording();
+
+	      this.recordRTC = recordRTC;
+	      this.isRecording = true;
+	    }
+	  }, {
+	    key: "onUserMediaError",
+	    value: function onUserMediaError() {
+	      // TODO: Handle recording error
 	    }
 	  }]);
 
@@ -95,6 +162,6076 @@ return /******/ (function(modules) { // webpackBootstrap
 
 /***/ },
 /* 1 */
+/***/ function(module, exports, __webpack_require__) {
+
+	'use strict';
+
+	var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+	function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+	var Lame = __webpack_require__(8);
+	var Promise = __webpack_require__(6).Promise;
+	var extend = __webpack_require__(9);
+
+	var defaultEncodeOptions = {
+	  channels: 1,
+	  sampleRate: 44100,
+	  kbps: 128,
+	  maxSamples: 1152
+	};
+	var channels = {
+	  mono: 1,
+	  stereo: 2
+	};
+
+	var Converter = (function () {
+	  function Converter() {
+	    _classCallCheck(this, Converter);
+
+	    this.lame = new Lame();
+	  }
+
+	  _createClass(Converter, [{
+	    key: 'toMp3',
+	    value: function toMp3(blob) {
+	      var _this = this;
+
+	      var fileReader = new FileReader();
+	      fileReader.readAsArrayBuffer(blob);
+
+	      return new Promise(function (resolve, reject) {
+	        _this.mp3Resolver = resolve;
+	        fileReader.onload = _this.onBlobReady.bind(fileReader, _this);
+	      });
+	    }
+	  }, {
+	    key: 'onBlobReady',
+	    value: function onBlobReady(converter) {
+	      var blobResult = this.result;
+	      var samples = new Int16Array(blobResult);
+	      var wav = converter.lame.WavHeader.readHeader(new DataView(blobResult));
+
+	      if (wav.channels === channels.stereo) {
+	        var left = [],
+	            right = [],
+	            i = 0;
+
+	        while (i < samples.length) {
+	          left.push(samples[i]);
+	          right.push(samples[i + 1]);
+
+	          i += channels.stereo;
+	        }
+
+	        samples = [left, right];
+	      } else {
+	        samples = [samples];
+	      }
+
+	      converter.encodeSamplesToMp3(samples, {
+	        channels: wav.channels,
+	        sampleRate: wav.sampleRate
+	      });
+	    }
+	  }, {
+	    key: 'encodeSamplesToMp3',
+	    value: function encodeSamplesToMp3(samples, opts) {
+	      opts = extend(defaultEncodeOptions, opts);
+
+	      var left = samples[0];
+	      var right = samples[1];
+	      var maxSamples = opts.maxSamples;
+	      var remaining = left.length;
+	      var mp3enc = new this.lame.Mp3Encoder(opts.channels, opts.sampleRate, opts.kbps);
+	      var buffer = [],
+	          i = 0,
+	          mp3buf,
+	          ld,
+	          rd,
+	          data,
+	          blob,
+	          url;
+
+	      while (remaining >= maxSamples) {
+	        i += maxSamples;
+	        ld = left.splice(i, i + maxSamples);
+	        rd = right ? right.splice(i, i + maxSamples) : null;
+	        mp3buf = mp3enc.encodeBuffer(ld, rd);
+
+	        mp3buf.length > 0 && buffer.push(new Int8Array(mp3buf));
+
+	        remaining -= maxSamples;
+	      }
+
+	      data = mp3enc.flush();
+
+	      data.length > 0 && buffer.push(new Int8Array(data));
+
+	      // TODO: add feature arrayBufferToBase64 https://github.com/zzarcon/ember-meme-generator/blob/master/app/controllers/application.js#L34-L43
+	      blob = new Blob(buffer, { type: 'audio/mp3' });
+	      url = URL.createObjectURL(blob);
+
+	      this.mp3Resolver({
+	        buffer: buffer,
+	        blob: blob,
+	        url: url
+	      });
+	      // TODO: add events
+	      // this.addEvents()
+	    }
+	  }]);
+
+	  return Converter;
+	})();
+
+	module.exports = Converter;
+
+/***/ },
+/* 2 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/**
+	 * DOCS...
+	 */
+	'use strict';
+
+	var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
+
+	function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
+
+	var _utils = __webpack_require__(7);
+
+	var eventNames = ['loadedmetadata', 'timeupdate', 'play', 'pause', 'ended'];
+
+	var Player = (function () {
+	  function Player(src) {
+	    _classCallCheck(this, Player);
+
+	    var audio = document.createElement('audio');
+
+	    audio.src = src;
+
+	    this.isLoaded = false;
+	    this.isPlaying = false;
+	    this.isStoped = true;
+	    this.duration = 0;
+	    this.currentTime = 0;
+	    this.audio = audio;
+	    this.addEvents();
+	  }
+
+	  _createClass(Player, [{
+	    key: 'play',
+	    value: function play() {
+	      this.audio.play();
+	    }
+	  }, {
+	    key: 'pause',
+	    value: function pause() {
+	      this.pauseAudio();
+	    }
+	  }, {
+	    key: 'stop',
+	    value: function stop() {
+	      this.pauseAudio(0);
+	    }
+	  }, {
+	    key: 'pauseAudio',
+	    value: function pauseAudio(currentTime) {
+	      this.audio.pause();
+
+	      if (typeof currentTime !== 'undefined') {
+	        this.audio.currentTime = currentTime;
+	        this.currentTime = currentTime;
+	      }
+	    }
+	  }, {
+	    key: 'addEvents',
+	    value: function addEvents() {
+	      var _this = this;
+
+	      var audio = this.audio;
+	      this.pauseAudio(0);
+
+	      eventNames.forEach(function (name) {
+	        var handlerName = "on" + (0, _utils.capitalize)(name);
+	        audio.addEventListener(name, _this[handlerName].bind(_this));
+	      });
+	    }
+
+	    //
+	    // Event handlers
+	    //
+	  }, {
+	    key: 'onLoadedmetadata',
+	    value: function onLoadedmetadata() {
+	      this.isLoaded = true;
+	      this.duration = this.audio.duration;
+	    }
+	  }, {
+	    key: 'onTimeupdate',
+	    value: function onTimeupdate() {
+	      this.currentTime = this.audio.currentTime;
+	    }
+	  }, {
+	    key: 'onPlay',
+	    value: function onPlay() {
+	      this.isPlaying = true;
+	      this.isStoped = false;
+	    }
+	  }, {
+	    key: 'onPause',
+	    value: function onPause() {
+	      this.isPlaying = false;
+	    }
+	  }, {
+	    key: 'onEnded',
+	    value: function onEnded() {
+	      this.isPlaying = false;
+	      this.isStoped = true;
+	    }
+	  }]);
+
+	  return Player;
+	})();
+
+	module.exports = Player;
+
+/***/ },
+/* 3 */
+/***/ function(module, exports, __webpack_require__) {
+
+	'use strict';
+
+	var RSVP = __webpack_require__(6);
+
+	module.exports = (function () {
+	  function setup() {
+	    // Avoid Error swallowing
+	    RSVP.on('error', function (reason) {
+	      console.assert(false, reason);
+	    });
+	  }
+
+	  return {
+	    setup: setup
+	  };
+	})();
+
+/***/ },
+/* 4 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/*
+	 *  Copyright (c) 2014 The WebRTC project authors. All Rights Reserved.
+	 *
+	 *  Use of this source code is governed by a BSD-style license
+	 *  that can be found in the LICENSE file in the root of the source
+	 *  tree.
+	 */
+
+	/* More information about these options at jshint.com/docs/options */
+	/* jshint browser: true, camelcase: true, curly: true, devel: true,
+	   eqeqeq: true, forin: false, globalstrict: true, node: true,
+	   quotmark: single, undef: true, unused: strict */
+	/* global mozRTCIceCandidate, mozRTCPeerConnection, Promise,
+	mozRTCSessionDescription, webkitRTCPeerConnection, MediaStreamTrack */
+	/* exported trace,requestUserMedia */
+
+	'use strict';
+
+	var getUserMedia = null;
+	var attachMediaStream = null;
+	var reattachMediaStream = null;
+	var webrtcDetectedBrowser = null;
+	var webrtcDetectedVersion = null;
+	var webrtcMinimumVersion = null;
+	var webrtcUtils = {
+	  log: function() {
+	    // suppress console.log output when being included as a module.
+	    if (true) {
+	      return;
+	    }
+	    console.log.apply(console, arguments);
+	  },
+	  extractVersion: function(uastring, expr, pos) {
+	    var match = uastring.match(expr);
+	    return match && match.length >= pos && parseInt(match[pos]);
+	  }
+	};
+
+	function trace(text) {
+	  // This function is used for logging.
+	  if (text[text.length - 1] === '\n') {
+	    text = text.substring(0, text.length - 1);
+	  }
+	  if (window.performance) {
+	    var now = (window.performance.now() / 1000).toFixed(3);
+	    webrtcUtils.log(now + ': ' + text);
+	  } else {
+	    webrtcUtils.log(text);
+	  }
+	}
+
+	if (typeof window === 'object') {
+	  if (window.HTMLMediaElement &&
+	    !('srcObject' in window.HTMLMediaElement.prototype)) {
+	    // Shim the srcObject property, once, when HTMLMediaElement is found.
+	    Object.defineProperty(window.HTMLMediaElement.prototype, 'srcObject', {
+	      get: function() {
+	        // If prefixed srcObject property exists, return it.
+	        // Otherwise use the shimmed property, _srcObject
+	        return 'mozSrcObject' in this ? this.mozSrcObject : this._srcObject;
+	      },
+	      set: function(stream) {
+	        if ('mozSrcObject' in this) {
+	          this.mozSrcObject = stream;
+	        } else {
+	          // Use _srcObject as a private property for this shim
+	          this._srcObject = stream;
+	          // TODO: revokeObjectUrl(this.src) when !stream to release resources?
+	          this.src = URL.createObjectURL(stream);
+	        }
+	      }
+	    });
+	  }
+	  // Proxy existing globals
+	  getUserMedia = window.navigator && window.navigator.getUserMedia;
+	}
+
+	// Attach a media stream to an element.
+	attachMediaStream = function(element, stream) {
+	  element.srcObject = stream;
+	};
+
+	reattachMediaStream = function(to, from) {
+	  to.srcObject = from.srcObject;
+	};
+
+	if (typeof window === 'undefined' || !window.navigator) {
+	  webrtcUtils.log('This does not appear to be a browser');
+	  webrtcDetectedBrowser = 'not a browser';
+	} else if (navigator.mozGetUserMedia && window.mozRTCPeerConnection) {
+	  webrtcUtils.log('This appears to be Firefox');
+
+	  webrtcDetectedBrowser = 'firefox';
+
+	  // the detected firefox version.
+	  webrtcDetectedVersion = webrtcUtils.extractVersion(navigator.userAgent,
+	      /Firefox\/([0-9]+)\./, 1);
+
+	  // the minimum firefox version still supported by adapter.
+	  webrtcMinimumVersion = 31;
+
+	  // The RTCPeerConnection object.
+	  window.RTCPeerConnection = function(pcConfig, pcConstraints) {
+	    if (webrtcDetectedVersion < 38) {
+	      // .urls is not supported in FF < 38.
+	      // create RTCIceServers with a single url.
+	      if (pcConfig && pcConfig.iceServers) {
+	        var newIceServers = [];
+	        for (var i = 0; i < pcConfig.iceServers.length; i++) {
+	          var server = pcConfig.iceServers[i];
+	          if (server.hasOwnProperty('urls')) {
+	            for (var j = 0; j < server.urls.length; j++) {
+	              var newServer = {
+	                url: server.urls[j]
+	              };
+	              if (server.urls[j].indexOf('turn') === 0) {
+	                newServer.username = server.username;
+	                newServer.credential = server.credential;
+	              }
+	              newIceServers.push(newServer);
+	            }
+	          } else {
+	            newIceServers.push(pcConfig.iceServers[i]);
+	          }
+	        }
+	        pcConfig.iceServers = newIceServers;
+	      }
+	    }
+	    return new mozRTCPeerConnection(pcConfig, pcConstraints); // jscs:ignore requireCapitalizedConstructors
+	  };
+
+	  // The RTCSessionDescription object.
+	  if (!window.RTCSessionDescription) {
+	    window.RTCSessionDescription = mozRTCSessionDescription;
+	  }
+
+	  // The RTCIceCandidate object.
+	  if (!window.RTCIceCandidate) {
+	    window.RTCIceCandidate = mozRTCIceCandidate;
+	  }
+
+	  // getUserMedia constraints shim.
+	  getUserMedia = function(constraints, onSuccess, onError) {
+	    var constraintsToFF37 = function(c) {
+	      if (typeof c !== 'object' || c.require) {
+	        return c;
+	      }
+	      var require = [];
+	      Object.keys(c).forEach(function(key) {
+	        if (key === 'require' || key === 'advanced' || key === 'mediaSource') {
+	          return;
+	        }
+	        var r = c[key] = (typeof c[key] === 'object') ?
+	            c[key] : {ideal: c[key]};
+	        if (r.min !== undefined ||
+	            r.max !== undefined || r.exact !== undefined) {
+	          require.push(key);
+	        }
+	        if (r.exact !== undefined) {
+	          if (typeof r.exact === 'number') {
+	            r.min = r.max = r.exact;
+	          } else {
+	            c[key] = r.exact;
+	          }
+	          delete r.exact;
+	        }
+	        if (r.ideal !== undefined) {
+	          c.advanced = c.advanced || [];
+	          var oc = {};
+	          if (typeof r.ideal === 'number') {
+	            oc[key] = {min: r.ideal, max: r.ideal};
+	          } else {
+	            oc[key] = r.ideal;
+	          }
+	          c.advanced.push(oc);
+	          delete r.ideal;
+	          if (!Object.keys(r).length) {
+	            delete c[key];
+	          }
+	        }
+	      });
+	      if (require.length) {
+	        c.require = require;
+	      }
+	      return c;
+	    };
+	    if (webrtcDetectedVersion < 38) {
+	      webrtcUtils.log('spec: ' + JSON.stringify(constraints));
+	      if (constraints.audio) {
+	        constraints.audio = constraintsToFF37(constraints.audio);
+	      }
+	      if (constraints.video) {
+	        constraints.video = constraintsToFF37(constraints.video);
+	      }
+	      webrtcUtils.log('ff37: ' + JSON.stringify(constraints));
+	    }
+	    return navigator.mozGetUserMedia(constraints, onSuccess, onError);
+	  };
+
+	  navigator.getUserMedia = getUserMedia;
+
+	  // Shim for mediaDevices on older versions.
+	  if (!navigator.mediaDevices) {
+	    navigator.mediaDevices = {getUserMedia: requestUserMedia,
+	      addEventListener: function() { },
+	      removeEventListener: function() { }
+	    };
+	  }
+	  navigator.mediaDevices.enumerateDevices =
+	      navigator.mediaDevices.enumerateDevices || function() {
+	    return new Promise(function(resolve) {
+	      var infos = [
+	        {kind: 'audioinput', deviceId: 'default', label: '', groupId: ''},
+	        {kind: 'videoinput', deviceId: 'default', label: '', groupId: ''}
+	      ];
+	      resolve(infos);
+	    });
+	  };
+
+	  if (webrtcDetectedVersion < 41) {
+	    // Work around http://bugzil.la/1169665
+	    var orgEnumerateDevices =
+	        navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
+	    navigator.mediaDevices.enumerateDevices = function() {
+	      return orgEnumerateDevices().then(undefined, function(e) {
+	        if (e.name === 'NotFoundError') {
+	          return [];
+	        }
+	        throw e;
+	      });
+	    };
+	  }
+	} else if (navigator.webkitGetUserMedia && window.webkitRTCPeerConnection) {
+	  webrtcUtils.log('This appears to be Chrome');
+
+	  webrtcDetectedBrowser = 'chrome';
+
+	  // the detected chrome version.
+	  webrtcDetectedVersion = webrtcUtils.extractVersion(navigator.userAgent,
+	      /Chrom(e|ium)\/([0-9]+)\./, 2);
+
+	  // the minimum chrome version still supported by adapter.
+	  webrtcMinimumVersion = 38;
+
+	  // The RTCPeerConnection object.
+	  window.RTCPeerConnection = function(pcConfig, pcConstraints) {
+	    // Translate iceTransportPolicy to iceTransports,
+	    // see https://code.google.com/p/webrtc/issues/detail?id=4869
+	    if (pcConfig && pcConfig.iceTransportPolicy) {
+	      pcConfig.iceTransports = pcConfig.iceTransportPolicy;
+	    }
+
+	    var pc = new webkitRTCPeerConnection(pcConfig, pcConstraints); // jscs:ignore requireCapitalizedConstructors
+	    var origGetStats = pc.getStats.bind(pc);
+	    pc.getStats = function(selector, successCallback, errorCallback) { // jshint ignore: line
+	      var self = this;
+	      var args = arguments;
+
+	      // If selector is a function then we are in the old style stats so just
+	      // pass back the original getStats format to avoid breaking old users.
+	      if (arguments.length > 0 && typeof selector === 'function') {
+	        return origGetStats(selector, successCallback);
+	      }
+
+	      var fixChromeStats = function(response) {
+	        var standardReport = {};
+	        var reports = response.result();
+	        reports.forEach(function(report) {
+	          var standardStats = {
+	            id: report.id,
+	            timestamp: report.timestamp,
+	            type: report.type
+	          };
+	          report.names().forEach(function(name) {
+	            standardStats[name] = report.stat(name);
+	          });
+	          standardReport[standardStats.id] = standardStats;
+	        });
+
+	        return standardReport;
+	      };
+
+	      if (arguments.length >= 2) {
+	        var successCallbackWrapper = function(response) {
+	          args[1](fixChromeStats(response));
+	        };
+
+	        return origGetStats.apply(this, [successCallbackWrapper, arguments[0]]);
+	      }
+
+	      // promise-support
+	      return new Promise(function(resolve, reject) {
+	        if (args.length === 1 && selector === null) {
+	          origGetStats.apply(self, [
+	              function(response) {
+	                resolve.apply(null, [fixChromeStats(response)]);
+	              }, reject]);
+	        } else {
+	          origGetStats.apply(self, [resolve, reject]);
+	        }
+	      });
+	    };
+
+	    return pc;
+	  };
+
+	  // add promise support
+	  ['createOffer', 'createAnswer'].forEach(function(method) {
+	    var nativeMethod = webkitRTCPeerConnection.prototype[method];
+	    webkitRTCPeerConnection.prototype[method] = function() {
+	      var self = this;
+	      if (arguments.length < 1 || (arguments.length === 1 &&
+	          typeof(arguments[0]) === 'object')) {
+	        var opts = arguments.length === 1 ? arguments[0] : undefined;
+	        return new Promise(function(resolve, reject) {
+	          nativeMethod.apply(self, [resolve, reject, opts]);
+	        });
+	      } else {
+	        return nativeMethod.apply(this, arguments);
+	      }
+	    };
+	  });
+
+	  ['setLocalDescription', 'setRemoteDescription',
+	      'addIceCandidate'].forEach(function(method) {
+	    var nativeMethod = webkitRTCPeerConnection.prototype[method];
+	    webkitRTCPeerConnection.prototype[method] = function() {
+	      var args = arguments;
+	      var self = this;
+	      return new Promise(function(resolve, reject) {
+	        nativeMethod.apply(self, [args[0],
+	            function() {
+	              resolve();
+	              if (args.length >= 2) {
+	                args[1].apply(null, []);
+	              }
+	            },
+	            function(err) {
+	              reject(err);
+	              if (args.length >= 3) {
+	                args[2].apply(null, [err]);
+	              }
+	            }]
+	          );
+	      });
+	    };
+	  });
+
+	  // getUserMedia constraints shim.
+	  var constraintsToChrome = function(c) {
+	    if (typeof c !== 'object' || c.mandatory || c.optional) {
+	      return c;
+	    }
+	    var cc = {};
+	    Object.keys(c).forEach(function(key) {
+	      if (key === 'require' || key === 'advanced' || key === 'mediaSource') {
+	        return;
+	      }
+	      var r = (typeof c[key] === 'object') ? c[key] : {ideal: c[key]};
+	      if (r.exact !== undefined && typeof r.exact === 'number') {
+	        r.min = r.max = r.exact;
+	      }
+	      var oldname = function(prefix, name) {
+	        if (prefix) {
+	          return prefix + name.charAt(0).toUpperCase() + name.slice(1);
+	        }
+	        return (name === 'deviceId') ? 'sourceId' : name;
+	      };
+	      if (r.ideal !== undefined) {
+	        cc.optional = cc.optional || [];
+	        var oc = {};
+	        if (typeof r.ideal === 'number') {
+	          oc[oldname('min', key)] = r.ideal;
+	          cc.optional.push(oc);
+	          oc = {};
+	          oc[oldname('max', key)] = r.ideal;
+	          cc.optional.push(oc);
+	        } else {
+	          oc[oldname('', key)] = r.ideal;
+	          cc.optional.push(oc);
+	        }
+	      }
+	      if (r.exact !== undefined && typeof r.exact !== 'number') {
+	        cc.mandatory = cc.mandatory || {};
+	        cc.mandatory[oldname('', key)] = r.exact;
+	      } else {
+	        ['min', 'max'].forEach(function(mix) {
+	          if (r[mix] !== undefined) {
+	            cc.mandatory = cc.mandatory || {};
+	            cc.mandatory[oldname(mix, key)] = r[mix];
+	          }
+	        });
+	      }
+	    });
+	    if (c.advanced) {
+	      cc.optional = (cc.optional || []).concat(c.advanced);
+	    }
+	    return cc;
+	  };
+
+	  getUserMedia = function(constraints, onSuccess, onError) {
+	    if (constraints.audio) {
+	      constraints.audio = constraintsToChrome(constraints.audio);
+	    }
+	    if (constraints.video) {
+	      constraints.video = constraintsToChrome(constraints.video);
+	    }
+	    webrtcUtils.log('chrome: ' + JSON.stringify(constraints));
+	    return navigator.webkitGetUserMedia(constraints, onSuccess, onError);
+	  };
+	  navigator.getUserMedia = getUserMedia;
+
+	  if (!navigator.mediaDevices) {
+	    navigator.mediaDevices = {getUserMedia: requestUserMedia,
+	                              enumerateDevices: function() {
+	      return new Promise(function(resolve) {
+	        var kinds = {audio: 'audioinput', video: 'videoinput'};
+	        return MediaStreamTrack.getSources(function(devices) {
+	          resolve(devices.map(function(device) {
+	            return {label: device.label,
+	                    kind: kinds[device.kind],
+	                    deviceId: device.id,
+	                    groupId: ''};
+	          }));
+	        });
+	      });
+	    }};
+	  }
+
+	  // A shim for getUserMedia method on the mediaDevices object.
+	  // TODO(KaptenJansson) remove once implemented in Chrome stable.
+	  if (!navigator.mediaDevices.getUserMedia) {
+	    navigator.mediaDevices.getUserMedia = function(constraints) {
+	      return requestUserMedia(constraints);
+	    };
+	  } else {
+	    // Even though Chrome 45 has navigator.mediaDevices and a getUserMedia
+	    // function which returns a Promise, it does not accept spec-style
+	    // constraints.
+	    var origGetUserMedia = navigator.mediaDevices.getUserMedia.
+	        bind(navigator.mediaDevices);
+	    navigator.mediaDevices.getUserMedia = function(c) {
+	      webrtcUtils.log('spec:   ' + JSON.stringify(c)); // whitespace for alignment
+	      c.audio = constraintsToChrome(c.audio);
+	      c.video = constraintsToChrome(c.video);
+	      webrtcUtils.log('chrome: ' + JSON.stringify(c));
+	      return origGetUserMedia(c);
+	    };
+	  }
+
+	  // Dummy devicechange event methods.
+	  // TODO(KaptenJansson) remove once implemented in Chrome stable.
+	  if (typeof navigator.mediaDevices.addEventListener === 'undefined') {
+	    navigator.mediaDevices.addEventListener = function() {
+	      webrtcUtils.log('Dummy mediaDevices.addEventListener called.');
+	    };
+	  }
+	  if (typeof navigator.mediaDevices.removeEventListener === 'undefined') {
+	    navigator.mediaDevices.removeEventListener = function() {
+	      webrtcUtils.log('Dummy mediaDevices.removeEventListener called.');
+	    };
+	  }
+
+	  // Attach a media stream to an element.
+	  attachMediaStream = function(element, stream) {
+	    if (webrtcDetectedVersion >= 43) {
+	      element.srcObject = stream;
+	    } else if (typeof element.src !== 'undefined') {
+	      element.src = URL.createObjectURL(stream);
+	    } else {
+	      webrtcUtils.log('Error attaching stream to element.');
+	    }
+	  };
+	  reattachMediaStream = function(to, from) {
+	    if (webrtcDetectedVersion >= 43) {
+	      to.srcObject = from.srcObject;
+	    } else {
+	      to.src = from.src;
+	    }
+	  };
+
+	} else if (navigator.mediaDevices && navigator.userAgent.match(
+	    /Edge\/(\d+).(\d+)$/)) {
+	  webrtcUtils.log('This appears to be Edge');
+	  webrtcDetectedBrowser = 'edge';
+
+	  webrtcDetectedVersion = webrtcUtils.extractVersion(navigator.userAgent,
+	      /Edge\/(\d+).(\d+)$/, 2);
+
+	  // the minimum version still supported by adapter.
+	  webrtcMinimumVersion = 12;
+	} else {
+	  webrtcUtils.log('Browser does not appear to be WebRTC-capable');
+	}
+
+	// Returns the result of getUserMedia as a Promise.
+	function requestUserMedia(constraints) {
+	  return new Promise(function(resolve, reject) {
+	    getUserMedia(constraints, resolve, reject);
+	  });
+	}
+
+	var webrtcTesting = {};
+	try {
+	  Object.defineProperty(webrtcTesting, 'version', {
+	    set: function(version) {
+	      webrtcDetectedVersion = version;
+	    }
+	  });
+	} catch (e) {}
+
+	if (true) {
+	  var RTCPeerConnection;
+	  if (typeof window !== 'undefined') {
+	    RTCPeerConnection = window.RTCPeerConnection;
+	  }
+	  module.exports = {
+	    RTCPeerConnection: RTCPeerConnection,
+	    getUserMedia: getUserMedia,
+	    attachMediaStream: attachMediaStream,
+	    reattachMediaStream: reattachMediaStream,
+	    webrtcDetectedBrowser: webrtcDetectedBrowser,
+	    webrtcDetectedVersion: webrtcDetectedVersion,
+	    webrtcMinimumVersion: webrtcMinimumVersion,
+	    webrtcTesting: webrtcTesting,
+	    webrtcUtils: webrtcUtils
+	    //requestUserMedia: not exposed on purpose.
+	    //trace: not exposed on purpose.
+	  };
+	} else if ((typeof require === 'function') && (typeof define === 'function')) {
+	  // Expose objects and functions when RequireJS is doing the loading.
+	  define([], function() {
+	    return {
+	      RTCPeerConnection: window.RTCPeerConnection,
+	      getUserMedia: getUserMedia,
+	      attachMediaStream: attachMediaStream,
+	      reattachMediaStream: reattachMediaStream,
+	      webrtcDetectedBrowser: webrtcDetectedBrowser,
+	      webrtcDetectedVersion: webrtcDetectedVersion,
+	      webrtcMinimumVersion: webrtcMinimumVersion,
+	      webrtcTesting: webrtcTesting,
+	      webrtcUtils: webrtcUtils
+	      //requestUserMedia: not exposed on purpose.
+	      //trace: not exposed on purpose.
+	    };
+	  });
+	}
+
+
+/***/ },
+/* 5 */
+/***/ function(module, exports, __webpack_require__) {
+
+	var __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;// Last time updated at Tuesday, October 27th, 2015, 4:33:33 PM 
+
+	// links:
+	// Open-Sourced: https://github.com/muaz-khan/RecordRTC
+	// https://cdn.WebRTC-Experiment.com/RecordRTC.js
+	// https://www.WebRTC-Experiment.com/RecordRTC.js
+	// npm install recordrtc
+	// http://recordrtc.org/
+
+	// updates?
+	/*
+	-. Added support for MediaRecorder API in Chrome. Currently requires: RecordRTC(stream, {recorderType: MediaStreamRecorder})
+	-. mimeType, bitsPerSecond, audioBitsPerSecond, videoBitsPerSecond added.
+	-. CanvasRecorder.js updated to support Firefox. (experimental)
+	-. Now you can reuse single RecordRTC object i.e. stop/start/stop/start/ and so on.
+	-. GifRecorder.js can now record HTMLCanvasElement|CanvasRenderingContext2D as well.
+	-. added: frameInterval:20 for WhammyRecorder.js
+	-. chrome issue  audio plus 720p-video recording can be fixed by setting bufferSize:16384
+	-. fixed Firefox save-as dialog i.e. recordRTC.save('filen-name')
+	-. "indexedDB" bug fixed for Firefox.
+	-. numberOfAudioChannels:1 can be passed to reduce WAV size in Chrome.
+	-. StereoRecorder.js is removed. It was redundant. Now RecordRTC is directly using: StereoAudioRecorder.js
+	-. mergeProps is removed. It was redundant.
+	-. reformatProps is removed. Now plz pass exact frameRate/sampleRate instead of frame-rate/sample-rate
+	-. Firefox supports remote-audio-recording since v28 - RecordRTC(remoteStream, { recorderType: StereoAudioRecorder });
+	-. added 3 methods: initRecorder, setRecordingDuration and clearRecordedData
+	-. Microsoft Edge support added (only-audio-yet).
+	-. You can pass "recorderType" - RecordRTC(stream, { recorderType: StereoAudioRecorder });
+	-. If MediaStream is suddenly stopped in Firefox.
+	-. Added "disableLogs"         - RecordRTC(stream, { disableLogs: true });
+	-. You can pass "bufferSize:0" - RecordRTC(stream, { bufferSize: 0 });
+	-. You can set "leftChannel"   - RecordRTC(stream, { leftChannel: true });
+	-. Added functionality for analyse black frames and cut them - pull#293
+	-. if you're recording GIF, you must link: https://cdn.webrtc-experiment.com/gif-recorder.js
+	-. You can set "frameInterval" for video - RecordRTC(stream, { type: 'video', frameInterval: 100 });
+	*/
+
+	//------------------------------------
+
+	// Browsers Support::
+	// Chrome (all versions) [ audio/video separately ]
+	// Firefox ( >= 29 ) [ audio/video in single webm/mp4 container or only audio in ogg ]
+	// Opera (all versions) [ same as chrome ]
+	// Android (Chrome) [ only video ]
+	// Android (Opera) [ only video ]
+	// Android (Firefox) [ only video ]
+	// Microsoft Edge (Only Audio & Gif)
+
+	//------------------------------------
+	// Muaz Khan     - www.MuazKhan.com
+	// MIT License   - www.WebRTC-Experiment.com/licence
+	//------------------------------------
+	// Note: RecordRTC.js is using 3 other libraries; you need to accept their licences as well.
+	//------------------------------------
+	// 1. RecordRTC.js
+	// 2. MRecordRTC.js
+	// 3. Cross-Browser-Declarations.js
+	// 4. Storage.js
+	// 5. MediaStreamRecorder.js
+	// 6. StereoAudioRecorder.js
+	// 7. CanvasRecorder.js
+	// 8. WhammyRecorder.js
+	// 9. Whammy.js
+	// 10. DiskStorage.js
+	// 11. GifRecorder.js
+	//------------------------------------
+
+	'use strict';
+
+	// ____________
+	// RecordRTC.js
+
+	/**
+	 * {@link https://github.com/muaz-khan/RecordRTC|RecordRTC} is a JavaScript-based media-recording library for modern web-browsers (supporting WebRTC getUserMedia API). It is optimized for different devices and browsers to bring all client-side (pluginfree) recording solutions in single place.
+	 * @summary JavaScript audio/video recording library runs top over WebRTC getUserMedia API.
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @typedef RecordRTC
+	 * @class
+	 * @example
+	 * var recordRTC = RecordRTC(mediaStream, {
+	 *     type: 'video' // audio or video or gif or canvas
+	 * });
+	 *
+	 * // or, you can even use keyword "new"
+	 * var recordRTC = new RecordRTC(mediaStream[, config]);
+	 * @see For further information:
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
+	 * @param {object} config - {type:"video", disableLogs: true, numberOfAudioChannels: 1, bufferSize: 0, sampleRate: 0, video: HTMLVideoElement, etc.}
+	 */
+
+	function RecordRTC(mediaStream, config) {
+	    if (!mediaStream) {
+	        throw 'MediaStream is mandatory.';
+	    }
+
+	    config = new RecordRTCConfiguration(mediaStream, config);
+
+	    // a reference to user's recordRTC object
+	    var self = this;
+
+	    function startRecording() {
+	        if (!config.disableLogs) {
+	            console.debug('started recording ' + config.type + ' stream.');
+	        }
+
+	        if (mediaRecorder) {
+	            mediaRecorder.clearRecordedData();
+	            mediaRecorder.resume();
+
+	            if (self.recordingDuration) {
+	                handleRecordingDuration();
+	            }
+	            return self;
+	        }
+
+	        initRecorder(function() {
+	            if (self.recordingDuration) {
+	                handleRecordingDuration();
+	            }
+	        });
+
+	        return self;
+	    }
+
+	    function initRecorder(initCallback) {
+	        if (!config.disableLogs) {
+	            console.debug('initializing ' + config.type + ' stream recorder.');
+	        }
+
+	        if (initCallback) {
+	            config.initCallback = function() {
+	                initCallback();
+	                initCallback = config.initCallback = null; // recordRTC.initRecorder should be call-backed once.
+	            };
+	        }
+
+	        var Recorder = new GetRecorderType(mediaStream, config);
+
+	        mediaRecorder = new Recorder(mediaStream, config);
+	        mediaRecorder.record();
+	    }
+
+	    function stopRecording(callback) {
+	        if (!mediaRecorder) {
+	            return console.warn(WARNING);
+	        }
+
+	        /*jshint validthis:true */
+	        var recordRTC = this;
+
+	        if (!config.disableLogs) {
+	            console.warn('Stopped recording ' + config.type + ' stream.');
+	        }
+
+	        if (config.type !== 'gif') {
+	            mediaRecorder.stop(_callback);
+	        } else {
+	            mediaRecorder.stop();
+	            _callback();
+	        }
+
+	        function _callback() {
+	            for (var item in mediaRecorder) {
+	                if (self) {
+	                    self[item] = mediaRecorder[item];
+	                }
+
+	                if (recordRTC) {
+	                    recordRTC[item] = mediaRecorder[item];
+	                }
+	            }
+
+	            var blob = mediaRecorder.blob;
+	            if (callback) {
+	                var url = URL.createObjectURL(blob);
+	                callback(url);
+	            }
+
+	            if (blob && !config.disableLogs) {
+	                console.debug(blob.type, '->', bytesToSize(blob.size));
+	            }
+
+	            if (!config.autoWriteToDisk) {
+	                return;
+	            }
+
+	            getDataURL(function(dataURL) {
+	                var parameter = {};
+	                parameter[config.type + 'Blob'] = dataURL;
+	                DiskStorage.Store(parameter);
+	            });
+	        }
+	    }
+
+	    function pauseRecording() {
+	        if (!mediaRecorder) {
+	            return console.warn(WARNING);
+	        }
+
+	        mediaRecorder.pause();
+
+	        if (!config.disableLogs) {
+	            console.debug('Paused recording.');
+	        }
+	    }
+
+	    function resumeRecording() {
+	        if (!mediaRecorder) {
+	            return console.warn(WARNING);
+	        }
+
+	        // not all libs yet having  this method
+	        mediaRecorder.resume();
+
+	        if (!config.disableLogs) {
+	            console.debug('Resumed recording.');
+	        }
+	    }
+
+	    function getDataURL(callback, _mediaRecorder) {
+	        if (!callback) {
+	            throw 'Pass a callback function over getDataURL.';
+	        }
+
+	        var blob = _mediaRecorder ? _mediaRecorder.blob : mediaRecorder.blob;
+
+	        if (!blob) {
+	            if (!config.disableLogs) {
+	                console.warn('Blob encoder did not yet finished its job.');
+	            }
+
+	            setTimeout(function() {
+	                getDataURL(callback, _mediaRecorder);
+	            }, 1000);
+	            return;
+	        }
+
+	        if (typeof Worker !== 'undefined') {
+	            var webWorker = processInWebWorker(function readFile(_blob) {
+	                postMessage(new FileReaderSync().readAsDataURL(_blob));
+	            });
+
+	            webWorker.onmessage = function(event) {
+	                callback(event.data);
+	            };
+
+	            webWorker.postMessage(blob);
+	        } else {
+	            var reader = new FileReader();
+	            reader.readAsDataURL(blob);
+	            reader.onload = function(event) {
+	                callback(event.target.result);
+	            };
+	        }
+
+	        function processInWebWorker(_function) {
+	            var blob = URL.createObjectURL(new Blob([_function.toString(),
+	                'this.onmessage =  function (e) {' + _function.name + '(e.data);}'
+	            ], {
+	                type: 'application/javascript'
+	            }));
+
+	            var worker = new Worker(blob);
+	            URL.revokeObjectURL(blob);
+	            return worker;
+	        }
+	    }
+
+	    function handleRecordingDuration() {
+	        setTimeout(function() {
+	            stopRecording(self.onRecordingStopped);
+	        }, self.recordingDuration);
+	    }
+
+	    var WARNING = 'It seems that "startRecording" is not invoked for ' + config.type + ' recorder.';
+
+	    var mediaRecorder;
+
+	    var returnObject = {
+	        /**
+	         * This method starts recording. It doesn't take any argument.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.startRecording();
+	         */
+	        startRecording: startRecording,
+
+	        /**
+	         * This method stops recording. It takes single "callback" argument. It is suggested to get blob or URI in the callback to make sure all encoders finished their jobs.
+	         * @param {function} callback - This callback function is invoked after completion of all encoding jobs.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.stopRecording(function(videoURL) {
+	         *     video.src = videoURL;
+	         *     recordRTC.blob; recordRTC.buffer;
+	         * });
+	         */
+	        stopRecording: stopRecording,
+
+	        /**
+	         * This method pauses the recording process.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.pauseRecording();
+	         */
+	        pauseRecording: pauseRecording,
+
+	        /**
+	         * This method resumes the recording process.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.resumeRecording();
+	         */
+	        resumeRecording: resumeRecording,
+
+	        /**
+	         * This method initializes the recording process.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.initRecorder();
+	         */
+	        initRecorder: initRecorder,
+
+	        /**
+	         * This method initializes the recording process.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.initRecorder();
+	         */
+	        setRecordingDuration: function(milliseconds, callback) {
+	            if (typeof milliseconds === 'undefined') {
+	                throw 'milliseconds is required.';
+	            }
+
+	            if (typeof milliseconds !== 'number') {
+	                throw 'milliseconds must be a number.';
+	            }
+
+	            self.recordingDuration = milliseconds;
+	            self.onRecordingStopped = callback || function() {};
+
+	            return {
+	                onRecordingStopped: function(callback) {
+	                    self.onRecordingStopped = callback;
+	                }
+	            };
+	        },
+
+	        /**
+	         * This method can be used to clear/reset all the recorded data.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.clearRecordedData();
+	         */
+	        clearRecordedData: function() {
+	            if (!mediaRecorder) {
+	                return console.warn(WARNING);
+	            }
+
+	            mediaRecorder.clearRecordedData();
+
+	            if (!config.disableLogs) {
+	                console.debug('Cleared old recorded data.');
+	            }
+	        },
+
+	        /**
+	         * It is equivalent to <code class="str">"recordRTC.blob"</code> property.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.stopRecording(function() {
+	         *     var blob = recordRTC.getBlob();
+	         *
+	         *     // equivalent to: recordRTC.blob property
+	         *     var blob = recordRTC.blob;
+	         * });
+	         */
+	        getBlob: function() {
+	            if (!mediaRecorder) {
+	                return console.warn(WARNING);
+	            }
+
+	            return mediaRecorder.blob;
+	        },
+
+	        /**
+	         * This method returns DataURL. It takes single "callback" argument.
+	         * @param {function} callback - DataURL is passed back over this callback.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.stopRecording(function() {
+	         *     recordRTC.getDataURL(function(dataURL) {
+	         *         video.src = dataURL;
+	         *     });
+	         * });
+	         */
+	        getDataURL: getDataURL,
+
+	        /**
+	         * This method returns Virutal/Blob URL. It doesn't take any argument.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.stopRecording(function() {
+	         *     video.src = recordRTC.toURL();
+	         * });
+	         */
+	        toURL: function() {
+	            if (!mediaRecorder) {
+	                return console.warn(WARNING);
+	            }
+
+	            return URL.createObjectURL(mediaRecorder.blob);
+	        },
+
+	        /**
+	         * This method saves blob/file into disk (by inovking save-as dialog). It takes single (optional) argument i.e. FileName
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.stopRecording(function() {
+	         *     recordRTC.save('file-name');
+	         * });
+	         */
+	        save: function(fileName) {
+	            if (!mediaRecorder) {
+	                return console.warn(WARNING);
+	            }
+
+	            invokeSaveAsDialog(mediaRecorder.blob, fileName);
+	        },
+
+	        /**
+	         * This method gets blob from indexed-DB storage. It takes single "callback" argument.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.getFromDisk(function(dataURL) {
+	         *     video.src = dataURL;
+	         * });
+	         */
+	        getFromDisk: function(callback) {
+	            if (!mediaRecorder) {
+	                return console.warn(WARNING);
+	            }
+
+	            RecordRTC.getFromDisk(config.type, callback);
+	        },
+
+	        /**
+	         * This method appends prepends array of webp images to the recorded video-blob. It takes an "array" object.
+	         * @type {Array.<Array>}
+	         * @param {Array} arrayOfWebPImages - Array of webp images.
+	         * @method
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * var arrayOfWebPImages = [];
+	         * arrayOfWebPImages.push({
+	         *     duration: index,
+	         *     image: 'data:image/webp;base64,...'
+	         * });
+	         * recordRTC.setAdvertisementArray(arrayOfWebPImages);
+	         */
+	        setAdvertisementArray: function(arrayOfWebPImages) {
+	            config.advertisement = [];
+
+	            var length = arrayOfWebPImages.length;
+	            for (var i = 0; i < length; i++) {
+	                config.advertisement.push({
+	                    duration: i,
+	                    image: arrayOfWebPImages[i]
+	                });
+	            }
+	        },
+
+	        /**
+	         * It is equivalent to <code class="str">"recordRTC.getBlob()"</code> method.
+	         * @property {Blob} blob - Recorded Blob can be accessed using this property.
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.stopRecording(function() {
+	         *     var blob = recordRTC.blob;
+	         *
+	         *     // equivalent to: recordRTC.getBlob() method
+	         *     var blob = recordRTC.getBlob();
+	         * });
+	         */
+	        blob: null,
+
+	        /**
+	         * @todo Add descriptions.
+	         * @property {number} bufferSize - Either audio device's default buffer-size, or your custom value.
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.stopRecording(function() {
+	         *     var bufferSize = recordRTC.bufferSize;
+	         * });
+	         */
+	        bufferSize: 0,
+
+	        /**
+	         * @todo Add descriptions.
+	         * @property {number} sampleRate - Audio device's default sample rates.
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.stopRecording(function() {
+	         *     var sampleRate = recordRTC.sampleRate;
+	         * });
+	         */
+	        sampleRate: 0,
+
+	        /**
+	         * @todo Add descriptions.
+	         * @property {ArrayBuffer} buffer - Audio ArrayBuffer, supported only in Chrome.
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.stopRecording(function() {
+	         *     var buffer = recordRTC.buffer;
+	         * });
+	         */
+	        buffer: null,
+
+	        /**
+	         * @todo Add descriptions.
+	         * @property {DataView} view - Audio DataView, supported only in Chrome.
+	         * @memberof RecordRTC
+	         * @instance
+	         * @example
+	         * recordRTC.stopRecording(function() {
+	         *     var dataView = recordRTC.view;
+	         * });
+	         */
+	        view: null
+	    };
+
+	    if (!this) {
+	        self = returnObject;
+	        return returnObject;
+	    }
+
+	    // if someone wanna use RecordRTC with "new" keyword.
+	    for (var prop in returnObject) {
+	        this[prop] = returnObject[prop];
+	    }
+
+	    self = this;
+
+	    return returnObject;
+	}
+
+	/**
+	 * This method can be used to get all recorded blobs from IndexedDB storage.
+	 * @param {string} type - 'all' or 'audio' or 'video' or 'gif'
+	 * @param {function} callback - Callback function to get all stored blobs.
+	 * @method
+	 * @memberof RecordRTC
+	 * @example
+	 * RecordRTC.getFromDisk('all', function(dataURL, type){
+	 *     if(type === 'audio') { }
+	 *     if(type === 'video') { }
+	 *     if(type === 'gif')   { }
+	 * });
+	 */
+	RecordRTC.getFromDisk = function(type, callback) {
+	    if (!callback) {
+	        throw 'callback is mandatory.';
+	    }
+
+	    console.log('Getting recorded ' + (type === 'all' ? 'blobs' : type + ' blob ') + ' from disk!');
+	    DiskStorage.Fetch(function(dataURL, _type) {
+	        if (type !== 'all' && _type === type + 'Blob' && callback) {
+	            callback(dataURL);
+	        }
+
+	        if (type === 'all' && callback) {
+	            callback(dataURL, _type.replace('Blob', ''));
+	        }
+	    });
+	};
+
+	/**
+	 * This method can be used to store recorded blobs into IndexedDB storage.
+	 * @param {object} options - {audio: Blob, video: Blob, gif: Blob}
+	 * @method
+	 * @memberof RecordRTC
+	 * @example
+	 * RecordRTC.writeToDisk({
+	 *     audio: audioBlob,
+	 *     video: videoBlob,
+	 *     gif  : gifBlob
+	 * });
+	 */
+	RecordRTC.writeToDisk = function(options) {
+	    console.log('Writing recorded blob(s) to disk!');
+	    options = options || {};
+	    if (options.audio && options.video && options.gif) {
+	        options.audio.getDataURL(function(audioDataURL) {
+	            options.video.getDataURL(function(videoDataURL) {
+	                options.gif.getDataURL(function(gifDataURL) {
+	                    DiskStorage.Store({
+	                        audioBlob: audioDataURL,
+	                        videoBlob: videoDataURL,
+	                        gifBlob: gifDataURL
+	                    });
+	                });
+	            });
+	        });
+	    } else if (options.audio && options.video) {
+	        options.audio.getDataURL(function(audioDataURL) {
+	            options.video.getDataURL(function(videoDataURL) {
+	                DiskStorage.Store({
+	                    audioBlob: audioDataURL,
+	                    videoBlob: videoDataURL
+	                });
+	            });
+	        });
+	    } else if (options.audio && options.gif) {
+	        options.audio.getDataURL(function(audioDataURL) {
+	            options.gif.getDataURL(function(gifDataURL) {
+	                DiskStorage.Store({
+	                    audioBlob: audioDataURL,
+	                    gifBlob: gifDataURL
+	                });
+	            });
+	        });
+	    } else if (options.video && options.gif) {
+	        options.video.getDataURL(function(videoDataURL) {
+	            options.gif.getDataURL(function(gifDataURL) {
+	                DiskStorage.Store({
+	                    videoBlob: videoDataURL,
+	                    gifBlob: gifDataURL
+	                });
+	            });
+	        });
+	    } else if (options.audio) {
+	        options.audio.getDataURL(function(audioDataURL) {
+	            DiskStorage.Store({
+	                audioBlob: audioDataURL
+	            });
+	        });
+	    } else if (options.video) {
+	        options.video.getDataURL(function(videoDataURL) {
+	            DiskStorage.Store({
+	                videoBlob: videoDataURL
+	            });
+	        });
+	    } else if (options.gif) {
+	        options.gif.getDataURL(function(gifDataURL) {
+	            DiskStorage.Store({
+	                gifBlob: gifDataURL
+	            });
+	        });
+	    }
+	};
+
+	if (true /* && !!module.exports*/ ) {
+	    module.exports = RecordRTC;
+	}
+
+	if (true) {
+	    !(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_RESULT__ = function() {
+	        return RecordRTC;
+	    }.apply(exports, __WEBPACK_AMD_DEFINE_ARRAY__), __WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
+	}
+
+	// __________________________
+	// RecordRTC-Configuration.js
+
+	/**
+	 * {@link RecordRTCConfiguration} is an inner/private helper for {@link RecordRTC}.
+	 * @summary It configures the 2nd parameter passed over {@link RecordRTC} and returns a valid "config" object.
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @typedef RecordRTCConfiguration
+	 * @class
+	 * @example
+	 * var options = RecordRTCConfiguration(mediaStream, options);
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
+	 * @param {object} config - {type:"video", disableLogs: true, numberOfAudioChannels: 1, bufferSize: 0, sampleRate: 0, video: HTMLVideoElement, etc.}
+	 */
+
+	function RecordRTCConfiguration(mediaStream, config) {
+	    if (config.recorderType && !config.type) {
+	        if (config.recorderType === WhammyRecorder || config.recorderType === CanvasRecorder) {
+	            config.type = 'video';
+	        } else if (config.recorderType === GifRecorder) {
+	            config.type = 'gif';
+	        } else if (config.recorderType === StereoAudioRecorder) {
+	            config.type = 'audio';
+	        } else if (config.recorderType === MediaStreamRecorder) {
+	            if (mediaStream.getAudioTracks().length && mediaStream.getVideoTracks().length) {
+	                config.type = 'video';
+	            } else if (mediaStream.getAudioTracks().length && !mediaStream.getVideoTracks().length) {
+	                config.type = 'audio';
+	            } else if (!mediaStream.getAudioTracks().length && mediaStream.getVideoTracks().length) {
+	                config.type = 'audio';
+	            } else {
+	                // config.type = 'UnKnown';
+	            }
+	        }
+	    }
+
+	    if (typeof MediaStreamRecorder !== 'undefined' && typeof MediaRecorder !== 'undefined' && 'requestData' in MediaRecorder.prototype) {
+	        if (!config.mimeType) {
+	            config.mimeType = 'video/webm';
+	        }
+
+	        if (!config.type) {
+	            config.type = config.mimeType.split('/')[0];
+	        }
+
+	        if (!config.bitsPerSecond) {
+	            config.bitsPerSecond = 128000;
+	        }
+	    }
+
+	    // consider default type=audio
+	    if (!config.type) {
+	        if (config.mimeType) {
+	            config.type = config.mimeType.split('/')[0];
+	        }
+	        if (!config.type) {
+	            config.type = 'audio';
+	        }
+	    }
+
+	    return config;
+	}
+
+	// __________________
+	// GetRecorderType.js
+
+	/**
+	 * {@link GetRecorderType} is an inner/private helper for {@link RecordRTC}.
+	 * @summary It returns best recorder-type available for your browser.
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @typedef GetRecorderType
+	 * @class
+	 * @example
+	 * var RecorderType = GetRecorderType(options);
+	 * var recorder = new RecorderType(options);
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
+	 * @param {object} config - {type:"video", disableLogs: true, numberOfAudioChannels: 1, bufferSize: 0, sampleRate: 0, video: HTMLVideoElement, etc.}
+	 */
+
+	function GetRecorderType(mediaStream, config) {
+	    var recorder;
+
+	    // StereoAudioRecorder can work with all three: Edge, Firefox and Chrome
+	    // todo: detect if it is Edge, then auto use: StereoAudioRecorder
+	    if (isChrome || isEdge || isOpera) {
+	        // Media Stream Recording API has not been implemented in chrome yet;
+	        // That's why using WebAudio API to record stereo audio in WAV format
+	        recorder = StereoAudioRecorder;
+	    }
+
+	    if (typeof MediaRecorder !== 'undefined' && 'requestData' in MediaRecorder.prototype && !isChrome) {
+	        recorder = MediaStreamRecorder;
+	    }
+
+	    // video recorder (in WebM format)
+	    if (config.type === 'video' && (isChrome || isOpera)) {
+	        recorder = WhammyRecorder;
+	    }
+
+	    // video recorder (in Gif format)
+	    if (config.type === 'gif') {
+	        recorder = GifRecorder;
+	    }
+
+	    // html2canvas recording!
+	    if (config.type === 'canvas') {
+	        recorder = CanvasRecorder;
+	    }
+
+	    // todo: enable below block when MediaRecorder in Chrome gets out of flags; and it also supports audio recording.
+	    if (false) {
+	        if (mediaStream.getVideoTracks().length) {
+	            recorder = MediaStreamRecorder;
+	            if (!config.disableLogs) {
+	                console.debug('Using MediaRecorder API in chrome!');
+	            }
+	        }
+	    }
+
+	    if (config.recorderType) {
+	        recorder = config.recorderType;
+	    }
+
+	    return recorder;
+	}
+
+	// _____________
+	// MRecordRTC.js
+
+	/**
+	 * MRecordRTC runs top over {@link RecordRTC} to bring multiple recordings in single place, by providing simple API.
+	 * @summary MRecordRTC stands for "Multiple-RecordRTC".
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @typedef MRecordRTC
+	 * @class
+	 * @example
+	 * var recorder = new MRecordRTC();
+	 * recorder.addStream(MediaStream);
+	 * recorder.mediaType = {
+	 *     audio: true,
+	 *     video: true,
+	 *     gif: true
+	 * };
+	 * recorder.startRecording();
+	 * @see For further information:
+	 * @see {@link https://github.com/muaz-khan/RecordRTC/tree/master/MRecordRTC|MRecordRTC Source Code}
+	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
+	 */
+
+	function MRecordRTC(mediaStream) {
+
+	    /**
+	     * This method attaches MediaStream object to {@link MRecordRTC}.
+	     * @param {MediaStream} mediaStream - A MediaStream object, either fetched using getUserMedia API, or generated using captureStreamUntilEnded or WebAudio API.
+	     * @method
+	     * @memberof MRecordRTC
+	     * @example
+	     * recorder.addStream(MediaStream);
+	     */
+	    this.addStream = function(_mediaStream) {
+	        if (_mediaStream) {
+	            mediaStream = _mediaStream;
+	        }
+	    };
+
+	    /**
+	     * This property can be used to set recording type e.g. audio, or video, or gif, or canvas.
+	     * @property {object} mediaType - {audio: true, video: true, gif: true}
+	     * @memberof MRecordRTC
+	     * @example
+	     * var recorder = new MRecordRTC();
+	     * recorder.mediaType = {
+	     *     audio: true,
+	     *     video: true,
+	     *     gif  : true
+	     * };
+	     */
+	    this.mediaType = {
+	        audio: true,
+	        video: true
+	    };
+
+	    /**
+	     * This method starts recording.
+	     * @method
+	     * @memberof MRecordRTC
+	     * @example
+	     * recorder.startRecording();
+	     */
+	    this.startRecording = function() {
+	        if (!isChrome && mediaStream && mediaStream.getAudioTracks && mediaStream.getAudioTracks().length && mediaStream.getVideoTracks().length) {
+	            // Firefox is supporting both audio/video in single blob
+	            this.mediaType.audio = false;
+	        }
+
+	        if (this.mediaType.audio) {
+	            this.audioRecorder = new RecordRTC(mediaStream, {
+	                type: 'audio',
+	                bufferSize: this.bufferSize,
+	                sampleRate: this.sampleRate
+	            });
+	            this.audioRecorder.startRecording();
+	        }
+
+	        if (this.mediaType.video) {
+	            this.videoRecorder = new RecordRTC(mediaStream, {
+	                type: 'video',
+	                video: this.video,
+	                canvas: this.canvas
+	            });
+	            this.videoRecorder.startRecording();
+	        }
+
+	        if (this.mediaType.gif) {
+	            this.gifRecorder = new RecordRTC(mediaStream, {
+	                type: 'gif',
+	                frameRate: this.frameRate || 200,
+	                quality: this.quality || 10
+	            });
+	            this.gifRecorder.startRecording();
+	        }
+	    };
+
+	    /**
+	     * This method stop recording.
+	     * @param {function} callback - Callback function is invoked when all encoders finish their jobs.
+	     * @method
+	     * @memberof MRecordRTC
+	     * @example
+	     * recorder.stopRecording(function(recording){
+	     *     var audioBlob = recording.audio;
+	     *     var videoBlob = recording.video;
+	     *     var gifBlob   = recording.gif;
+	     * });
+	     */
+	    this.stopRecording = function(callback) {
+	        callback = callback || function() {};
+
+	        if (this.audioRecorder) {
+	            this.audioRecorder.stopRecording(function(blobURL) {
+	                callback(blobURL, 'audio');
+	            });
+	        }
+
+	        if (this.videoRecorder) {
+	            this.videoRecorder.stopRecording(function(blobURL) {
+	                callback(blobURL, 'video');
+	            });
+	        }
+
+	        if (this.gifRecorder) {
+	            this.gifRecorder.stopRecording(function(blobURL) {
+	                callback(blobURL, 'gif');
+	            });
+	        }
+	    };
+
+	    /**
+	     * This method can be used to manually get all recorded blobs.
+	     * @param {function} callback - All recorded blobs are passed back to "callback" function.
+	     * @method
+	     * @memberof MRecordRTC
+	     * @example
+	     * recorder.getBlob(function(recording){
+	     *     var audioBlob = recording.audio;
+	     *     var videoBlob = recording.video;
+	     *     var gifBlob   = recording.gif;
+	     * });
+	     * // or
+	     * var audioBlob = recorder.getBlob().audio;
+	     * var videoBlob = recorder.getBlob().video;
+	     */
+	    this.getBlob = function(callback) {
+	        var output = {};
+
+	        if (this.audioRecorder) {
+	            output.audio = this.audioRecorder.getBlob();
+	        }
+
+	        if (this.videoRecorder) {
+	            output.video = this.videoRecorder.getBlob();
+	        }
+
+	        if (this.gifRecorder) {
+	            output.gif = this.gifRecorder.getBlob();
+	        }
+
+	        if (callback) {
+	            callback(output);
+	        }
+
+	        return output;
+	    };
+
+	    /**
+	     * This method can be used to manually get all recorded blobs' DataURLs.
+	     * @param {function} callback - All recorded blobs' DataURLs are passed back to "callback" function.
+	     * @method
+	     * @memberof MRecordRTC
+	     * @example
+	     * recorder.getDataURL(function(recording){
+	     *     var audioDataURL = recording.audio;
+	     *     var videoDataURL = recording.video;
+	     *     var gifDataURL   = recording.gif;
+	     * });
+	     */
+	    this.getDataURL = function(callback) {
+	        this.getBlob(function(blob) {
+	            getDataURL(blob.audio, function(_audioDataURL) {
+	                getDataURL(blob.video, function(_videoDataURL) {
+	                    callback({
+	                        audio: _audioDataURL,
+	                        video: _videoDataURL
+	                    });
+	                });
+	            });
+	        });
+
+	        function getDataURL(blob, callback00) {
+	            if (typeof Worker !== 'undefined') {
+	                var webWorker = processInWebWorker(function readFile(_blob) {
+	                    postMessage(new FileReaderSync().readAsDataURL(_blob));
+	                });
+
+	                webWorker.onmessage = function(event) {
+	                    callback00(event.data);
+	                };
+
+	                webWorker.postMessage(blob);
+	            } else {
+	                var reader = new FileReader();
+	                reader.readAsDataURL(blob);
+	                reader.onload = function(event) {
+	                    callback00(event.target.result);
+	                };
+	            }
+	        }
+
+	        function processInWebWorker(_function) {
+	            var blob = URL.createObjectURL(new Blob([_function.toString(),
+	                'this.onmessage =  function (e) {' + _function.name + '(e.data);}'
+	            ], {
+	                type: 'application/javascript'
+	            }));
+
+	            var worker = new Worker(blob);
+	            var url;
+	            if (typeof URL !== 'undefined') {
+	                url = URL;
+	            } else if (typeof webkitURL !== 'undefined') {
+	                url = webkitURL;
+	            } else {
+	                throw 'Neither URL nor webkitURL detected.';
+	            }
+	            url.revokeObjectURL(blob);
+	            return worker;
+	        }
+	    };
+
+	    /**
+	     * This method can be used to ask {@link MRecordRTC} to write all recorded blobs into IndexedDB storage.
+	     * @method
+	     * @memberof MRecordRTC
+	     * @example
+	     * recorder.writeToDisk();
+	     */
+	    this.writeToDisk = function() {
+	        RecordRTC.writeToDisk({
+	            audio: this.audioRecorder,
+	            video: this.videoRecorder,
+	            gif: this.gifRecorder
+	        });
+	    };
+
+	    /**
+	     * This method can be used to invoke save-as dialog for all recorded blobs.
+	     * @param {object} args - {audio: 'audio-name', video: 'video-name', gif: 'gif-name'}
+	     * @method
+	     * @memberof MRecordRTC
+	     * @example
+	     * recorder.save({
+	     *     audio: 'audio-file-name',
+	     *     video: 'video-file-name',
+	     *     gif  : 'gif-file-name'
+	     * });
+	     */
+	    this.save = function(args) {
+	        args = args || {
+	            audio: true,
+	            video: true,
+	            gif: true
+	        };
+
+	        if (!!args.audio && this.audioRecorder) {
+	            this.audioRecorder.save(typeof args.audio === 'string' ? args.audio : '');
+	        }
+
+	        if (!!args.video && this.videoRecorder) {
+	            this.videoRecorder.save(typeof args.video === 'string' ? args.video : '');
+	        }
+	        if (!!args.gif && this.gifRecorder) {
+	            this.gifRecorder.save(typeof args.gif === 'string' ? args.gif : '');
+	        }
+	    };
+	}
+
+	/**
+	 * This method can be used to get all recorded blobs from IndexedDB storage.
+	 * @param {string} type - 'all' or 'audio' or 'video' or 'gif'
+	 * @param {function} callback - Callback function to get all stored blobs.
+	 * @method
+	 * @memberof MRecordRTC
+	 * @example
+	 * MRecordRTC.getFromDisk('all', function(dataURL, type){
+	 *     if(type === 'audio') { }
+	 *     if(type === 'video') { }
+	 *     if(type === 'gif')   { }
+	 * });
+	 */
+	MRecordRTC.getFromDisk = RecordRTC.getFromDisk;
+
+	/**
+	 * This method can be used to store recorded blobs into IndexedDB storage.
+	 * @param {object} options - {audio: Blob, video: Blob, gif: Blob}
+	 * @method
+	 * @memberof MRecordRTC
+	 * @example
+	 * MRecordRTC.writeToDisk({
+	 *     audio: audioBlob,
+	 *     video: videoBlob,
+	 *     gif  : gifBlob
+	 * });
+	 */
+	MRecordRTC.writeToDisk = RecordRTC.writeToDisk;
+
+	// _____________________________
+	// Cross-Browser-Declarations.js
+
+	// animation-frame used in WebM recording
+
+	/*jshint -W079 */
+	var requestAnimationFrame = window.requestAnimationFrame;
+	if (typeof requestAnimationFrame === 'undefined') {
+	    if (typeof webkitRequestAnimationFrame !== 'undefined') {
+	        /*global requestAnimationFrame:true */
+	        requestAnimationFrame = webkitRequestAnimationFrame;
+	    }
+
+	    if (typeof mozRequestAnimationFrame !== 'undefined') {
+	        /*global requestAnimationFrame:true */
+	        requestAnimationFrame = mozRequestAnimationFrame;
+	    }
+	}
+
+	/*jshint -W079 */
+	var cancelAnimationFrame = window.cancelAnimationFrame;
+	if (typeof cancelAnimationFrame === 'undefined') {
+	    if (typeof webkitCancelAnimationFrame !== 'undefined') {
+	        /*global cancelAnimationFrame:true */
+	        cancelAnimationFrame = webkitCancelAnimationFrame;
+	    }
+
+	    if (typeof mozCancelAnimationFrame !== 'undefined') {
+	        /*global cancelAnimationFrame:true */
+	        cancelAnimationFrame = mozCancelAnimationFrame;
+	    }
+	}
+
+	// WebAudio API representer
+	var AudioContext = window.AudioContext;
+
+	if (typeof AudioContext === 'undefined') {
+	    if (typeof webkitAudioContext !== 'undefined') {
+	        /*global AudioContext:true */
+	        AudioContext = webkitAudioContext;
+	    }
+
+	    if (typeof mozAudioContext !== 'undefined') {
+	        /*global AudioContext:true */
+	        AudioContext = mozAudioContext;
+	    }
+	}
+
+	/*jshint -W079 */
+	var URL = window.URL;
+
+	if (typeof URL === 'undefined' && typeof webkitURL !== 'undefined') {
+	    /*global URL:true */
+	    URL = webkitURL;
+	}
+
+	if (typeof navigator !== 'undefined') {
+	    if (typeof navigator.webkitGetUserMedia !== 'undefined') {
+	        navigator.getUserMedia = navigator.webkitGetUserMedia;
+	    }
+
+	    if (typeof navigator.mozGetUserMedia !== 'undefined') {
+	        navigator.getUserMedia = navigator.mozGetUserMedia;
+	    }
+	} else {
+	    // if you're using NPM or solutions where "navigator" is NOT available,
+	    // just define it globally before loading RecordRTC.js script.
+	    throw 'Please make sure to define a global variable named as "navigator"';
+	}
+
+	var isEdge = navigator.userAgent.indexOf('Edge') !== -1 && (!!navigator.msSaveBlob || !!navigator.msSaveOrOpenBlob);
+	var isOpera = !!window.opera || navigator.userAgent.indexOf('OPR/') !== -1;
+	var isChrome = !isOpera && !isEdge && !!navigator.webkitGetUserMedia;
+
+	var MediaStream = window.MediaStream;
+
+	if (typeof MediaStream === 'undefined' && typeof webkitMediaStream !== 'undefined') {
+	    MediaStream = webkitMediaStream;
+	}
+
+	/*global MediaStream:true */
+	if (typeof MediaStream !== 'undefined' && !('stop' in MediaStream.prototype)) {
+	    MediaStream.prototype.stop = function() {
+	        this.getAudioTracks().forEach(function(track) {
+	            track.stop();
+	        });
+
+	        this.getVideoTracks().forEach(function(track) {
+	            track.stop();
+	        });
+	    };
+	}
+
+	if (typeof location !== 'undefined') {
+	    if (location.href.indexOf('file:') === 0) {
+	        console.error('Please load this HTML file on HTTP or HTTPS.');
+	    }
+	}
+
+	// below function via: http://goo.gl/B3ae8c
+	/**
+	 * @param {number} bytes - Pass bytes and get formafted string.
+	 * @returns {string} - formafted string
+	 * @example
+	 * bytesToSize(1024*1024*5) === '5 GB'
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 */
+	function bytesToSize(bytes) {
+	    var k = 1000;
+	    var sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+	    if (bytes === 0) {
+	        return '0 Bytes';
+	    }
+	    var i = parseInt(Math.floor(Math.log(bytes) / Math.log(k)), 10);
+	    return (bytes / Math.pow(k, i)).toPrecision(3) + ' ' + sizes[i];
+	}
+
+	/**
+	 * @param {Blob} file - File or Blob object. This parameter is required.
+	 * @param {string} fileName - Optional file name e.g. "Recorded-Video.webm"
+	 * @example
+	 * invokeSaveAsDialog(blob or file, [optional] fileName);
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 */
+	function invokeSaveAsDialog(file, fileName) {
+	    if (!file) {
+	        throw 'Blob object is required.';
+	    }
+
+	    if (!file.type) {
+	        file.type = 'video/webm';
+	    }
+
+	    var fileExtension = file.type.split('/')[1];
+
+	    if (fileName && fileName.indexOf('.') !== -1) {
+	        var splitted = fileName.split('.');
+	        fileName = splitted[0];
+	        fileExtension = splitted[1];
+	    }
+
+	    var fileFullName = (fileName || (Math.round(Math.random() * 9999999999) + 888888888)) + '.' + fileExtension;
+
+	    if (typeof navigator.msSaveOrOpenBlob !== 'undefined') {
+	        return navigator.msSaveOrOpenBlob(file, fileFullName);
+	    } else if (typeof navigator.msSaveBlob !== 'undefined') {
+	        return navigator.msSaveBlob(file, fileFullName);
+	    }
+
+	    var hyperlink = document.createElement('a');
+	    hyperlink.href = URL.createObjectURL(file);
+	    hyperlink.target = '_blank';
+	    hyperlink.download = fileFullName;
+
+	    if (!!navigator.mozGetUserMedia) {
+	        hyperlink.onclick = function() {
+	            (document.body || document.documentElement).removeChild(hyperlink);
+	        };
+	        (document.body || document.documentElement).appendChild(hyperlink);
+	    }
+
+	    var evt = new MouseEvent('click', {
+	        view: window,
+	        bubbles: true,
+	        cancelable: true
+	    });
+
+	    hyperlink.dispatchEvent(evt);
+
+	    if (!navigator.mozGetUserMedia) {
+	        URL.revokeObjectURL(hyperlink.href);
+	    }
+	}
+
+	// __________ (used to handle stuff like http://goo.gl/xmE5eg) issue #129
+	// Storage.js
+
+	/**
+	 * Storage is a standalone object used by {@link RecordRTC} to store reusable objects e.g. "new AudioContext".
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @example
+	 * Storage.AudioContext === webkitAudioContext
+	 * @property {webkitAudioContext} AudioContext - Keeps a reference to AudioContext object.
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 */
+
+	var Storage = {};
+
+	if (typeof AudioContext !== 'undefined') {
+	    Storage.AudioContext = AudioContext;
+	} else if (typeof webkitAudioContext !== 'undefined') {
+	    Storage.AudioContext = webkitAudioContext;
+	}
+
+	// ______________________
+	// MediaStreamRecorder.js
+
+	// todo: need to show alert boxes for incompatible cases
+	// encoder only supports 48k/16k mono audio channel
+
+	/*
+	 * Implementation of https://dvcs.w3.org/hg/dap/raw-file/default/media-stream-capture/MediaRecorder.html
+	 * The MediaRecorder accepts a mediaStream as input source passed from UA. When recorder starts,
+	 * a MediaEncoder will be created and accept the mediaStream as input source.
+	 * Encoder will get the raw data by track data changes, encode it by selected MIME Type, then store the encoded in EncodedBufferCache object.
+	 * The encoded data will be extracted on every timeslice passed from Start function call or by RequestData function.
+	 * Thread model:
+	 * When the recorder starts, it creates a "Media Encoder" thread to read data from MediaEncoder object and store buffer in EncodedBufferCache object.
+	 * Also extract the encoded data and create blobs on every timeslice passed from start function or RequestData function called by UA.
+	 */
+
+	/**
+	 * MediaStreamRecorder is an abstraction layer for "MediaRecorder API". It is used by {@link RecordRTC} to record MediaStream(s) in Firefox.
+	 * @summary Runs top over MediaRecorder API.
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @typedef MediaStreamRecorder
+	 * @class
+	 * @example
+	 * var options = {
+	 *     mimeType: 'video/mp4', // audio/ogg or video/webm
+	 *     audioBitsPerSecond : 128000,
+	 *     videoBitsPerSecond : 2500000,
+	 *     bitsPerSecond: 2500000  // if this is provided, skip above two
+	 * }
+	 * var recorder = new MediaStreamRecorder(MediaStream, options);
+	 * recorder.record();
+	 * recorder.stop(function(blob) {
+	 *     video.src = URL.createObjectURL(blob);
+	 *
+	 *     // or
+	 *     var blob = recorder.blob;
+	 * });
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
+	 * @param {object} config - {disableLogs:true, initCallback: function, mimeType: "video/webm", onAudioProcessStarted: function}
+	 */
+
+	function MediaStreamRecorder(mediaStream, config) {
+	    config = config || {
+	        bitsPerSecond: 128000,
+	        mimeType: 'video/webm'
+	    };
+
+	    // if user chosen only audio option; and he tried to pass MediaStream with
+	    // both audio and video tracks;
+	    // using a dirty workaround to generate audio-only stream so that we can get audio/ogg output.
+	    if (!isChrome && config.type && config.type === 'audio') {
+	        if (mediaStream.getVideoTracks && mediaStream.getVideoTracks().length) {
+	            var context = new AudioContext();
+	            var mediaStreamSource = context.createMediaStreamSource(mediaStream);
+
+	            var destination = context.createMediaStreamDestination();
+	            mediaStreamSource.connect(destination);
+
+	            mediaStream = destination.stream;
+	        }
+
+	        if (!config.mimeType || config.mimeType.indexOf('audio') === -1) {
+	            config.mimeType = 'audio/ogg';
+	        }
+	    }
+
+	    var recordedBuffers = [];
+
+	    /**
+	     * This method records MediaStream.
+	     * @method
+	     * @memberof MediaStreamRecorder
+	     * @example
+	     * recorder.record();
+	     */
+	    this.record = function() {
+	        var recorderHints = config;
+
+	        if (isChrome) {
+	            if (!recorderHints || typeof recorderHints !== 'string') {
+	                recorderHints = 'video/vp8';
+
+	                // chrome currently supports only video recording
+	                mediaStream = new MediaStream(mediaStream.getVideoTracks());
+	            }
+	        }
+
+	        if (!config.disableLogs) {
+	            console.log('Passing following config over MediaRecorder API.', recorderHints);
+	        }
+
+	        if (mediaRecorder) {
+	            // mandatory to make sure Firefox doesn't fails to record streams 3-4 times without reloading the page.
+	            mediaRecorder = null;
+	        }
+
+	        // http://dxr.mozilla.org/mozilla-central/source/content/media/MediaRecorder.cpp
+	        // https://wiki.mozilla.org/Gecko:MediaRecorder
+	        // https://dvcs.w3.org/hg/dap/raw-file/default/media-stream-capture/MediaRecorder.html
+
+	        // starting a recording session; which will initiate "Reading Thread"
+	        // "Reading Thread" are used to prevent main-thread blocking scenarios
+	        mediaRecorder = new MediaRecorder(mediaStream, recorderHints);
+
+	        if ('canRecordMimeType' in mediaRecorder && mediaRecorder.canRecordMimeType(config.mimeType) === false) {
+	            if (!config.disableLogs) {
+	                console.warn('MediaRecorder API seems unable to record mimeType:', config.mimeType);
+	            }
+	        }
+
+	        // i.e. stop recording when <video> is paused by the user; and auto restart recording 
+	        // when video is resumed. E.g. yourStream.getVideoTracks()[0].muted = true; // it will auto-stop recording.
+	        mediaRecorder.ignoreMutedMedia = config.ignoreMutedMedia || false;
+
+	        // Dispatching OnDataAvailable Handler
+	        mediaRecorder.ondataavailable = function(e) {
+	            if (this.dontFireOnDataAvailableEvent) {
+	                return;
+	            }
+
+	            if (isChrome && e.data && !('size' in e.data)) {
+	                e.data.size = e.data.length || e.data.byteLength || 0;
+	            }
+
+	            if (e.data && e.data.size) {
+	                recordedBuffers.push(e.data);
+	            }
+	        };
+
+	        mediaRecorder.onerror = function(error) {
+	            if (!config.disableLogs) {
+	                if (error.name === 'InvalidState') {
+	                    console.error('The MediaRecorder is not in a state in which the proposed operation is allowed to be executed.');
+	                } else if (error.name === 'OutOfMemory') {
+	                    console.error('The UA has exhaused the available memory. User agents SHOULD provide as much additional information as possible in the message attribute.');
+	                } else if (error.name === 'IllegalStreamModification') {
+	                    console.error('A modification to the stream has occurred that makes it impossible to continue recording. An example would be the addition of a Track while recording is occurring. User agents SHOULD provide as much additional information as possible in the message attribute.');
+	                } else if (error.name === 'OtherRecordingError') {
+	                    console.error('Used for an fatal error other than those listed above. User agents SHOULD provide as much additional information as possible in the message attribute.');
+	                } else if (error.name === 'GenericError') {
+	                    console.error('The UA cannot provide the codec or recording option that has been requested.', error);
+	                } else {
+	                    console.error('MediaRecorder Error', error);
+	                }
+	            }
+
+	            // When the stream is "ended" set recording to 'inactive' 
+	            // and stop gathering data. Callers should not rely on 
+	            // exactness of the timeSlice value, especially 
+	            // if the timeSlice value is small. Callers should 
+	            // consider timeSlice as a minimum value
+
+	            if (mediaRecorder.state !== 'inactive' && mediaRecorder.state !== 'stopped') {
+	                mediaRecorder.stop();
+	            }
+	            // self.record(0);
+	        };
+
+	        // void start(optional long mTimeSlice)
+	        // The interval of passing encoded data from EncodedBufferCache to onDataAvailable
+	        // handler. "mTimeSlice < 0" means Session object does not push encoded data to
+	        // onDataAvailable, instead, it passive wait the client side pull encoded data
+	        // by calling requestData API.
+	        mediaRecorder.start(1);
+
+	        // Start recording. If timeSlice has been provided, mediaRecorder will
+	        // raise a dataavailable event containing the Blob of collected data on every timeSlice milliseconds.
+	        // If timeSlice isn't provided, UA should call the RequestData to obtain the Blob data, also set the mTimeSlice to zero.
+
+	        if (config.onAudioProcessStarted) {
+	            config.onAudioProcessStarted();
+	        }
+
+	        if (config.initCallback) {
+	            config.initCallback();
+	        }
+	    };
+
+	    /**
+	     * This method stops recording MediaStream.
+	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
+	     * @method
+	     * @memberof MediaStreamRecorder
+	     * @example
+	     * recorder.stop(function(blob) {
+	     *     video.src = URL.createObjectURL(blob);
+	     * });
+	     */
+	    this.stop = function(callback) {
+	        if (!mediaRecorder) {
+	            return;
+	        }
+
+	        this.recordingCallback = callback || function() {};
+
+	        // mediaRecorder.state === 'recording' means that media recorder is associated with "session"
+	        // mediaRecorder.state === 'stopped' means that media recorder is detached from the "session" ... in this case; "session" will also be deleted.
+
+	        if (mediaRecorder.state === 'recording') {
+	            // "stop" method auto invokes "requestData"!
+	            mediaRecorder.requestData();
+	            mediaRecorder.stop();
+	        }
+
+	        if (recordedBuffers.length) {
+	            this.onRecordingFinished();
+	        }
+	    };
+
+	    this.onRecordingFinished = function() {
+	        /**
+	         * @property {Blob} blob - Recorded frames in video/webm blob.
+	         * @memberof MediaStreamRecorder
+	         * @example
+	         * recorder.stop(function() {
+	         *     var blob = recorder.blob;
+	         * });
+	         */
+	        this.blob = new Blob(recordedBuffers, {
+	            type: config.mimeType || 'video/webm'
+	        });
+
+	        this.recordingCallback();
+
+	        recordedBuffers = [];
+	    };
+
+	    /**
+	     * This method pauses the recording process.
+	     * @method
+	     * @memberof MediaStreamRecorder
+	     * @example
+	     * recorder.pause();
+	     */
+	    this.pause = function() {
+	        if (!mediaRecorder) {
+	            return;
+	        }
+
+	        if (mediaRecorder.state === 'recording') {
+	            mediaRecorder.pause();
+	        }
+	    };
+
+	    /**
+	     * This method resumes the recording process.
+	     * @method
+	     * @memberof MediaStreamRecorder
+	     * @example
+	     * recorder.resume();
+	     */
+	    this.resume = function() {
+	        if (this.dontFireOnDataAvailableEvent) {
+	            this.dontFireOnDataAvailableEvent = false;
+	            this.record();
+	            return;
+	        }
+
+	        if (!mediaRecorder) {
+	            return;
+	        }
+
+	        if (mediaRecorder.state === 'paused') {
+	            mediaRecorder.resume();
+	        }
+	    };
+
+	    /**
+	     * This method resets currently recorded data.
+	     * @method
+	     * @memberof MediaStreamRecorder
+	     * @example
+	     * recorder.clearRecordedData();
+	     */
+	    this.clearRecordedData = function() {
+	        if (!mediaRecorder) {
+	            return;
+	        }
+
+	        this.pause();
+
+	        this.dontFireOnDataAvailableEvent = true;
+	        this.stop();
+	    };
+
+	    // Reference to "MediaRecorder" object
+	    var mediaRecorder;
+
+	    function isMediaStreamActive() {
+	        if ('active' in mediaStream) {
+	            if (!mediaStream.active) {
+	                return false;
+	            }
+	        } else if ('ended' in mediaStream) { // old hack
+	            if (mediaStream.ended) {
+	                return false;
+	            }
+	        }
+	    }
+
+	    var self = this;
+
+	    // this method checks if media stream is stopped
+	    // or any track is ended.
+	    (function looper() {
+	        if (!mediaRecorder) {
+	            return;
+	        }
+
+	        if (isMediaStreamActive() === false) {
+	            self.stop();
+	            return;
+	        }
+
+	        setTimeout(looper, 1000); // check every second
+	    })();
+	}
+
+	// source code from: http://typedarray.org/wp-content/projects/WebAudioRecorder/script.js
+	// https://github.com/mattdiamond/Recorderjs#license-mit
+	// ______________________
+	// StereoAudioRecorder.js
+
+	/**
+	 * StereoAudioRecorder is a standalone class used by {@link RecordRTC} to bring "stereo" audio-recording in chrome.
+	 * @summary JavaScript standalone object for stereo audio recording.
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @typedef StereoAudioRecorder
+	 * @class
+	 * @example
+	 * var recorder = new StereoAudioRecorder(MediaStream, {
+	 *     sampleRate: 44100,
+	 *     bufferSize: 4096
+	 * });
+	 * recorder.record();
+	 * recorder.stop(function(blob) {
+	 *     video.src = URL.createObjectURL(blob);
+	 * });
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
+	 * @param {object} config - {sampleRate: 44100, bufferSize: 4096, numberOfAudioChannels: 1, etc.}
+	 */
+
+	function StereoAudioRecorder(mediaStream, config) {
+	    if (!mediaStream.getAudioTracks().length) {
+	        throw 'Your stream has no audio tracks.';
+	    }
+
+	    config = config || {};
+
+	    var self = this;
+
+	    // variables
+	    var leftchannel = [];
+	    var rightchannel = [];
+	    var recording = false;
+	    var recordingLength = 0;
+	    var jsAudioNode;
+
+	    var numberOfAudioChannels = 2;
+
+	    // backward compatibility
+	    if (config.leftChannel === true) {
+	        numberOfAudioChannels = 1;
+	    }
+
+	    if (config.numberOfAudioChannels === 1) {
+	        numberOfAudioChannels = 1;
+	    }
+
+	    if (!config.disableLogs) {
+	        console.debug('StereoAudioRecorder is set to record number of channels: ', numberOfAudioChannels);
+	    }
+
+	    function isMediaStreamActive() {
+	        if ('active' in mediaStream) {
+	            if (!mediaStream.active) {
+	                return false;
+	            }
+	        } else if ('ended' in mediaStream) { // old hack
+	            if (mediaStream.ended) {
+	                return false;
+	            }
+	        }
+	    }
+
+	    /**
+	     * This method records MediaStream.
+	     * @method
+	     * @memberof StereoAudioRecorder
+	     * @example
+	     * recorder.record();
+	     */
+	    this.record = function() {
+	        if (isMediaStreamActive() === false) {
+	            throw 'Please make sure MediaStream is active.';
+	        }
+
+	        // reset the buffers for the new recording
+	        leftchannel.length = rightchannel.length = 0;
+	        recordingLength = 0;
+
+	        if (audioInput) {
+	            audioInput.connect(jsAudioNode);
+	        }
+
+	        // to prevent self audio to be connected with speakers
+	        // jsAudioNode.connect(context.destination);
+
+	        isAudioProcessStarted = isPaused = false;
+	        recording = true;
+	    };
+
+	    function mergeLeftRightBuffers(config, callback) {
+	        function mergeAudioBuffers(config, cb) {
+	            var numberOfAudioChannels = config.numberOfAudioChannels;
+
+	            // todo: "slice(0)" --- is it causes loop? Should be removed?
+	            var leftBuffers = config.leftBuffers.slice(0);
+	            var rightBuffers = config.rightBuffers.slice(0);
+	            var sampleRate = config.sampleRate;
+	            var internalInterleavedLength = config.internalInterleavedLength;
+
+	            if (numberOfAudioChannels === 2) {
+	                leftBuffers = mergeBuffers(leftBuffers, internalInterleavedLength);
+	                rightBuffers = mergeBuffers(rightBuffers, internalInterleavedLength);
+	            }
+
+	            if (numberOfAudioChannels === 1) {
+	                leftBuffers = mergeBuffers(leftBuffers, internalInterleavedLength);
+	            }
+
+	            function mergeBuffers(channelBuffer, rLength) {
+	                var result = new Float64Array(rLength);
+	                var offset = 0;
+	                var lng = channelBuffer.length;
+
+	                for (var i = 0; i < lng; i++) {
+	                    var buffer = channelBuffer[i];
+	                    result.set(buffer, offset);
+	                    offset += buffer.length;
+	                }
+
+	                return result;
+	            }
+
+	            function interleave(leftChannel, rightChannel) {
+	                var length = leftChannel.length + rightChannel.length;
+
+	                var result = new Float64Array(length);
+
+	                var inputIndex = 0;
+
+	                for (var index = 0; index < length;) {
+	                    result[index++] = leftChannel[inputIndex];
+	                    result[index++] = rightChannel[inputIndex];
+	                    inputIndex++;
+	                }
+	                return result;
+	            }
+
+	            function writeUTFBytes(view, offset, string) {
+	                var lng = string.length;
+	                for (var i = 0; i < lng; i++) {
+	                    view.setUint8(offset + i, string.charCodeAt(i));
+	                }
+	            }
+
+	            // interleave both channels together
+	            var interleaved;
+
+	            if (numberOfAudioChannels === 2) {
+	                interleaved = interleave(leftBuffers, rightBuffers);
+	            }
+
+	            if (numberOfAudioChannels === 1) {
+	                interleaved = leftBuffers;
+	            }
+
+	            var interleavedLength = interleaved.length;
+
+	            // create wav file
+	            var resultingBufferLength = 44 + interleavedLength * 2;
+
+	            var buffer = new ArrayBuffer(resultingBufferLength);
+
+	            var view = new DataView(buffer);
+
+	            // RIFF chunk descriptor/identifier 
+	            writeUTFBytes(view, 0, 'RIFF');
+
+	            // RIFF chunk length
+	            view.setUint32(4, 44 + interleavedLength * 2, true);
+
+	            // RIFF type 
+	            writeUTFBytes(view, 8, 'WAVE');
+
+	            // format chunk identifier 
+	            // FMT sub-chunk
+	            writeUTFBytes(view, 12, 'fmt ');
+
+	            // format chunk length 
+	            view.setUint32(16, 16, true);
+
+	            // sample format (raw)
+	            view.setUint16(20, 1, true);
+
+	            // stereo (2 channels)
+	            view.setUint16(22, numberOfAudioChannels, true);
+
+	            // sample rate 
+	            view.setUint32(24, sampleRate, true);
+
+	            // byte rate (sample rate * block align)
+	            view.setUint32(28, sampleRate * 4, true);
+
+	            // block align (channel count * bytes per sample) 
+	            view.setUint16(32, numberOfAudioChannels * 2, true);
+
+	            // bits per sample 
+	            view.setUint16(34, 16, true);
+
+	            // data sub-chunk
+	            // data chunk identifier 
+	            writeUTFBytes(view, 36, 'data');
+
+	            // data chunk length 
+	            view.setUint32(40, interleavedLength * 2, true);
+
+	            // write the PCM samples
+	            var lng = interleavedLength;
+	            var index = 44;
+	            var volume = 1;
+	            for (var i = 0; i < lng; i++) {
+	                view.setInt16(index, interleaved[i] * (0x7FFF * volume), true);
+	                index += 2;
+	            }
+
+	            if (cb) {
+	                return cb({
+	                    buffer: buffer,
+	                    view: view
+	                });
+	            }
+
+	            postMessage({
+	                buffer: buffer,
+	                view: view
+	            });
+	        }
+
+	        if (!isChrome) {
+	            // its Microsoft Edge
+	            mergeAudioBuffers(config, function(data) {
+	                callback(data.buffer, data.view);
+	            });
+	            return;
+	        }
+
+
+	        var webWorker = processInWebWorker(mergeAudioBuffers);
+
+	        webWorker.onmessage = function(event) {
+	            callback(event.data.buffer, event.data.view);
+
+	            // release memory
+	            URL.revokeObjectURL(webWorker.workerURL);
+	        };
+
+	        webWorker.postMessage(config);
+	    }
+
+	    function processInWebWorker(_function) {
+	        var workerURL = URL.createObjectURL(new Blob([_function.toString(),
+	            ';this.onmessage =  function (e) {' + _function.name + '(e.data);}'
+	        ], {
+	            type: 'application/javascript'
+	        }));
+
+	        var worker = new Worker(workerURL);
+	        worker.workerURL = workerURL;
+	        return worker;
+	    }
+
+	    /**
+	     * This method stops recording MediaStream.
+	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
+	     * @method
+	     * @memberof StereoAudioRecorder
+	     * @example
+	     * recorder.stop(function(blob) {
+	     *     video.src = URL.createObjectURL(blob);
+	     * });
+	     */
+	    this.stop = function(callback) {
+	        // stop recording
+	        recording = false;
+
+	        // to make sure onaudioprocess stops firing
+	        // audioInput.disconnect();
+
+	        mergeLeftRightBuffers({
+	            sampleRate: sampleRate,
+	            numberOfAudioChannels: numberOfAudioChannels,
+	            internalInterleavedLength: recordingLength,
+	            leftBuffers: leftchannel,
+	            rightBuffers: numberOfAudioChannels === 1 ? [] : rightchannel
+	        }, function(buffer, view) {
+	            /**
+	             * @property {Blob} blob - The recorded blob object.
+	             * @memberof StereoAudioRecorder
+	             * @example
+	             * recorder.stop(function(){
+	             *     var blob = recorder.blob;
+	             * });
+	             */
+	            self.blob = new Blob([view], {
+	                type: 'audio/wav'
+	            });
+
+	            /**
+	             * @property {ArrayBuffer} buffer - The recorded buffer object.
+	             * @memberof StereoAudioRecorder
+	             * @example
+	             * recorder.stop(function(){
+	             *     var buffer = recorder.buffer;
+	             * });
+	             */
+	            self.buffer = new ArrayBuffer(view);
+
+	            /**
+	             * @property {DataView} view - The recorded data-view object.
+	             * @memberof StereoAudioRecorder
+	             * @example
+	             * recorder.stop(function(){
+	             *     var view = recorder.view;
+	             * });
+	             */
+	            self.view = view;
+
+	            self.sampleRate = sampleRate;
+	            self.bufferSize = bufferSize;
+
+	            // recorded audio length
+	            self.length = recordingLength;
+
+	            if (callback) {
+	                callback();
+	            }
+
+	            isAudioProcessStarted = false;
+	        });
+	    };
+
+	    if (!Storage.AudioContextConstructor) {
+	        Storage.AudioContextConstructor = new Storage.AudioContext();
+	    }
+
+	    var context = Storage.AudioContextConstructor;
+
+	    // creates an audio node from the microphone incoming stream
+	    var audioInput = context.createMediaStreamSource(mediaStream);
+
+	    var legalBufferValues = [0, 256, 512, 1024, 2048, 4096, 8192, 16384];
+
+	    /**
+	     * From the spec: This value controls how frequently the audioprocess event is
+	     * dispatched and how many sample-frames need to be processed each call.
+	     * Lower values for buffer size will result in a lower (better) latency.
+	     * Higher values will be necessary to avoid audio breakup and glitches
+	     * The size of the buffer (in sample-frames) which needs to
+	     * be processed each time onprocessaudio is called.
+	     * Legal values are (256, 512, 1024, 2048, 4096, 8192, 16384).
+	     * @property {number} bufferSize - Buffer-size for how frequently the audioprocess event is dispatched.
+	     * @memberof StereoAudioRecorder
+	     * @example
+	     * recorder = new StereoAudioRecorder(mediaStream, {
+	     *     bufferSize: 4096
+	     * });
+	     */
+
+	    // "0" means, let chrome decide the most accurate buffer-size for current platform.
+	    var bufferSize = typeof config.bufferSize === 'undefined' ? 4096 : config.bufferSize;
+
+	    if (legalBufferValues.indexOf(bufferSize) === -1) {
+	        if (!config.disableLogs) {
+	            console.warn('Legal values for buffer-size are ' + JSON.stringify(legalBufferValues, null, '\t'));
+	        }
+	    }
+
+	    if (context.createJavaScriptNode) {
+	        jsAudioNode = context.createJavaScriptNode(bufferSize, numberOfAudioChannels, numberOfAudioChannels);
+	    } else if (context.createScriptProcessor) {
+	        jsAudioNode = context.createScriptProcessor(bufferSize, numberOfAudioChannels, numberOfAudioChannels);
+	    } else {
+	        throw 'WebAudio API has no support on this browser.';
+	    }
+
+	    // connect the stream to the gain node
+	    audioInput.connect(jsAudioNode);
+
+	    if (!config.bufferSize) {
+	        bufferSize = jsAudioNode.bufferSize; // device buffer-size
+	    }
+
+	    /**
+	     * The sample rate (in sample-frames per second) at which the
+	     * AudioContext handles audio. It is assumed that all AudioNodes
+	     * in the context run at this rate. In making this assumption,
+	     * sample-rate converters or "varispeed" processors are not supported
+	     * in real-time processing.
+	     * The sampleRate parameter describes the sample-rate of the
+	     * linear PCM audio data in the buffer in sample-frames per second.
+	     * An implementation must support sample-rates in at least
+	     * the range 22050 to 96000.
+	     * @property {number} sampleRate - Buffer-size for how frequently the audioprocess event is dispatched.
+	     * @memberof StereoAudioRecorder
+	     * @example
+	     * recorder = new StereoAudioRecorder(mediaStream, {
+	     *     sampleRate: 44100
+	     * });
+	     */
+	    var sampleRate = typeof config.sampleRate !== 'undefined' ? config.sampleRate : context.sampleRate || 44100;
+
+	    if (sampleRate < 22050 || sampleRate > 96000) {
+	        // Ref: http://stackoverflow.com/a/26303918/552182
+	        if (!config.disableLogs) {
+	            console.warn('sample-rate must be under range 22050 and 96000.');
+	        }
+	    }
+
+	    if (!config.disableLogs) {
+	        console.log('sample-rate', sampleRate);
+	        console.log('buffer-size', bufferSize);
+	    }
+
+	    var isPaused = false;
+	    /**
+	     * This method pauses the recording process.
+	     * @method
+	     * @memberof StereoAudioRecorder
+	     * @example
+	     * recorder.pause();
+	     */
+	    this.pause = function() {
+	        isPaused = true;
+	    };
+
+	    /**
+	     * This method resumes the recording process.
+	     * @method
+	     * @memberof StereoAudioRecorder
+	     * @example
+	     * recorder.resume();
+	     */
+	    this.resume = function() {
+	        if (isMediaStreamActive() === false) {
+	            throw 'Please make sure MediaStream is active.';
+	        }
+
+	        if (!recording) {
+	            if (!config.disableLogs) {
+	                console.info('Seems recording has been restarted.');
+	            }
+	            this.record();
+	            return;
+	        }
+
+	        isPaused = false;
+	    };
+
+	    /**
+	     * This method resets currently recorded data.
+	     * @method
+	     * @memberof StereoAudioRecorder
+	     * @example
+	     * recorder.clearRecordedData();
+	     */
+	    this.clearRecordedData = function() {
+	        this.pause();
+
+	        leftchannel.length = rightchannel.length = 0;
+	        recordingLength = 0;
+	    };
+
+	    var isAudioProcessStarted = false;
+
+	    function onAudioProcessDataAvailable(e) {
+	        if (isPaused) {
+	            return;
+	        }
+
+	        if (isMediaStreamActive() === false) {
+	            if (!config.disableLogs) {
+	                console.error('MediaStream seems stopped.');
+	            }
+	            jsAudioNode.disconnect();
+	            recording = false;
+	        }
+
+	        if (!recording) {
+	            audioInput.disconnect();
+	            return;
+	        }
+
+	        /**
+	         * This method is called on "onaudioprocess" event's first invocation.
+	         * @method {function} onAudioProcessStarted
+	         * @memberof StereoAudioRecorder
+	         * @example
+	         * recorder.onAudioProcessStarted: function() { };
+	         */
+	        if (!isAudioProcessStarted) {
+	            isAudioProcessStarted = true;
+	            if (config.onAudioProcessStarted) {
+	                config.onAudioProcessStarted();
+	            }
+
+	            if (config.initCallback) {
+	                config.initCallback();
+	            }
+	        }
+
+	        var left = e.inputBuffer.getChannelData(0);
+
+	        // we clone the samples
+	        leftchannel.push(new Float32Array(left));
+
+	        if (numberOfAudioChannels === 2) {
+	            var right = e.inputBuffer.getChannelData(1);
+	            rightchannel.push(new Float32Array(right));
+	        }
+
+	        recordingLength += bufferSize;
+	    }
+
+	    jsAudioNode.onaudioprocess = onAudioProcessDataAvailable;
+
+	    // to prevent self audio to be connected with speakers
+	    jsAudioNode.connect(context.destination);
+	}
+
+	// _________________
+	// CanvasRecorder.js
+
+	/**
+	 * CanvasRecorder is a standalone class used by {@link RecordRTC} to bring HTML5-Canvas recording into video WebM. It uses HTML2Canvas library and runs top over {@link Whammy}.
+	 * @summary HTML2Canvas recording into video WebM.
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @typedef CanvasRecorder
+	 * @class
+	 * @example
+	 * var recorder = new CanvasRecorder(htmlElement, { disableLogs: true });
+	 * recorder.record();
+	 * recorder.stop(function(blob) {
+	 *     video.src = URL.createObjectURL(blob);
+	 * });
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 * @param {HTMLElement} htmlElement - querySelector/getElementById/getElementsByTagName[0]/etc.
+	 * @param {object} config - {disableLogs:true, initCallback: function}
+	 */
+
+	function CanvasRecorder(htmlElement, config) {
+	    if (typeof html2canvas === 'undefined') {
+	        throw 'Please link: //cdn.webrtc-experiment.com/screenshot.js';
+	    }
+
+	    config = config || {};
+
+	    // via DetectRTC.js
+	    var isCanvasSupportsStreamCapturing = false;
+	    ['captureStream', 'mozCaptureStream', 'webkitCaptureStream'].forEach(function(item) {
+	        if (item in document.createElement('canvas')) {
+	            isCanvasSupportsStreamCapturing = true;
+	        }
+	    });
+
+	    var globalCanvas, globalContext, mediaStreamRecorder;
+
+	    if (isCanvasSupportsStreamCapturing) {
+	        if (!config.disableLogs) {
+	            console.debug('Your browser supports both MediRecorder API and canvas.captureStream!');
+	        }
+
+	        globalCanvas = document.createElement('canvas');
+
+	        globalCanvas.width = htmlElement.clientWidth || window.innerWidth;
+	        globalCanvas.height = htmlElement.clientHeight || window.innerHeight;
+
+	        globalCanvas.style = 'top: -9999999; left: -99999999; visibility:hidden; position:absoluted; display: none;';
+	        (document.body || document.documentElement).appendChild(globalCanvas);
+
+	        globalContext = globalCanvas.getContext('2d');
+	    } else if (!!navigator.mozGetUserMedia) {
+	        if (!config.disableLogs) {
+	            alert('Canvas recording is NOT supported in Firefox.');
+	        }
+	    }
+
+	    var isRecording;
+
+	    /**
+	     * This method records Canvas.
+	     * @method
+	     * @memberof CanvasRecorder
+	     * @example
+	     * recorder.record();
+	     */
+	    this.record = function() {
+	        if (isCanvasSupportsStreamCapturing) {
+	            // CanvasCaptureMediaStream
+	            var canvasMediaStream;
+	            if ('captureStream' in globalCanvas) {
+	                canvasMediaStream = globalCanvas.captureStream(25); // 25 FPS
+	            } else if ('mozCaptureStream' in globalCanvas) {
+	                canvasMediaStream = globalCanvas.captureStream(25);
+	            } else if ('webkitCaptureStream' in globalCanvas) {
+	                canvasMediaStream = globalCanvas.captureStream(25);
+	            }
+
+	            if (!canvasMediaStream) {
+	                throw 'captureStream API are NOT available.';
+	            }
+
+	            // Note: Sep, 2015 status is that, MediaRecorder API can't record CanvasCaptureMediaStream object.
+	            mediaStreamRecorder = new MediaStreamRecorder(canvasMediaStream, {
+	                mimeType: 'video/webm'
+	            });
+	            mediaStreamRecorder.record();
+	        }
+
+	        isRecording = true;
+	        whammy.frames = [];
+	        drawCanvasFrame();
+
+	        if (config.initCallback) {
+	            config.initCallback();
+	        }
+	    };
+
+	    /**
+	     * This method stops recording Canvas.
+	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
+	     * @method
+	     * @memberof CanvasRecorder
+	     * @example
+	     * recorder.stop(function(blob) {
+	     *     video.src = URL.createObjectURL(blob);
+	     * });
+	     */
+	    this.stop = function(callback) {
+	        isRecording = false;
+
+	        if (isCanvasSupportsStreamCapturing && mediaStreamRecorder) {
+	            var slef = this;
+	            mediaStreamRecorder.stop(function() {
+	                for (var prop in mediaStreamRecorder) {
+	                    self[prop] = mediaStreamRecorder[prop];
+	                }
+	                if (callback) {
+	                    callback(that.blob);
+	                }
+	            });
+	            return;
+	        }
+
+	        var that = this;
+
+	        /**
+	         * @property {Blob} blob - Recorded frames in video/webm blob.
+	         * @memberof CanvasRecorder
+	         * @example
+	         * recorder.stop(function() {
+	         *     var blob = recorder.blob;
+	         * });
+	         */
+	        whammy.compile(function(blob) {
+	            that.blob = blob;
+
+	            if (that.blob.forEach) {
+	                that.blob = new Blob([], {
+	                    type: 'video/webm'
+	                });
+	            }
+
+	            if (callback) {
+	                callback(that.blob);
+	            }
+
+	            whammy.frames = [];
+	        });
+	    };
+
+	    var isPausedRecording = false;
+
+	    /**
+	     * This method pauses the recording process.
+	     * @method
+	     * @memberof CanvasRecorder
+	     * @example
+	     * recorder.pause();
+	     */
+	    this.pause = function() {
+	        isPausedRecording = true;
+	    };
+
+	    /**
+	     * This method resumes the recording process.
+	     * @method
+	     * @memberof CanvasRecorder
+	     * @example
+	     * recorder.resume();
+	     */
+	    this.resume = function() {
+	        isPausedRecording = false;
+	    };
+
+	    /**
+	     * This method resets currently recorded data.
+	     * @method
+	     * @memberof CanvasRecorder
+	     * @example
+	     * recorder.clearRecordedData();
+	     */
+	    this.clearRecordedData = function() {
+	        this.pause();
+	        whammy.frames = [];
+	    };
+
+	    function drawCanvasFrame() {
+	        if (isPausedRecording) {
+	            lastTime = new Date().getTime();
+	            return setTimeout(drawCanvasFrame, 100);
+	        }
+
+	        html2canvas(htmlElement, {
+	            onrendered: function(canvas) {
+	                if (isCanvasSupportsStreamCapturing) {
+	                    var image = document.createElement('img');
+	                    image.src = canvas.toDataURL('image/png');
+	                    image.onload = function() {
+	                        globalContext.drawImage(image, 0, 0, image.clientWidth, image.clientHeight);
+	                        (document.body || document.documentElement).removeChild(image);
+	                    };
+	                    image.style.opacity = 0;
+	                    (document.body || document.documentElement).appendChild(image);
+	                } else {
+	                    var duration = new Date().getTime() - lastTime;
+	                    if (!duration) {
+	                        return drawCanvasFrame();
+	                    }
+
+	                    // via #206, by Jack i.e. @Seymourr
+	                    lastTime = new Date().getTime();
+
+	                    whammy.frames.push({
+	                        duration: duration,
+	                        image: canvas.toDataURL('image/webp')
+	                    });
+	                }
+
+	                if (isRecording) {
+	                    setTimeout(drawCanvasFrame, 0);
+	                }
+	            }
+	        });
+	    }
+
+	    var lastTime = new Date().getTime();
+
+	    var whammy = new Whammy.Video(100);
+	}
+
+	// _________________
+	// WhammyRecorder.js
+
+	/**
+	 * WhammyRecorder is a standalone class used by {@link RecordRTC} to bring video recording in Chrome. It runs top over {@link Whammy}.
+	 * @summary Video recording feature in Chrome.
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @typedef WhammyRecorder
+	 * @class
+	 * @example
+	 * var recorder = new WhammyRecorder(mediaStream);
+	 * recorder.record();
+	 * recorder.stop(function(blob) {
+	 *     video.src = URL.createObjectURL(blob);
+	 * });
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
+	 * @param {object} config - {disableLogs: true, initCallback: function, video: HTMLVideoElement, etc.}
+	 */
+
+	function WhammyRecorder(mediaStream, config) {
+
+	    config = config || {};
+
+	    if (!config.frameInterval) {
+	        config.frameInterval = 10;
+	    }
+
+	    if (!config.disableLogs) {
+	        console.log('Using frames-interval:', config.frameInterval);
+	    }
+
+	    /**
+	     * This method records video.
+	     * @method
+	     * @memberof WhammyRecorder
+	     * @example
+	     * recorder.record();
+	     */
+	    this.record = function() {
+	        if (!config.width) {
+	            config.width = 320;
+	        }
+
+	        if (!config.height) {
+	            config.height = 240;
+	        }
+
+	        if (!config.video) {
+	            config.video = {
+	                width: config.width,
+	                height: config.height
+	            };
+	        }
+
+	        if (!config.canvas) {
+	            config.canvas = {
+	                width: config.width,
+	                height: config.height
+	            };
+	        }
+
+	        canvas.width = config.canvas.width;
+	        canvas.height = config.canvas.height;
+
+	        context = canvas.getContext('2d');
+
+	        // setting defaults
+	        if (config.video && config.video instanceof HTMLVideoElement) {
+	            video = config.video.cloneNode();
+
+	            if (config.initCallback) {
+	                config.initCallback();
+	            }
+	        } else {
+	            video = document.createElement('video');
+
+	            if (typeof video.srcObject !== 'undefined') {
+	                video.srcObject = mediaStream;
+	            } else {
+	                video.src = URL.createObjectURL(mediaStream);
+	            }
+
+	            video.onloadedmetadata = function() { // "onloadedmetadata" may NOT work in FF?
+	                if (config.initCallback) {
+	                    config.initCallback();
+	                }
+	            };
+
+	            video.width = config.video.width;
+	            video.height = config.video.height;
+	        }
+
+	        video.muted = true;
+	        video.play();
+
+	        lastTime = new Date().getTime();
+	        whammy = new Whammy.Video();
+
+	        if (!config.disableLogs) {
+	            console.log('canvas resolutions', canvas.width, '*', canvas.height);
+	            console.log('video width/height', video.width || canvas.width, '*', video.height || canvas.height);
+	        }
+
+	        drawFrames(config.frameInterval);
+	    };
+
+	    /**
+	     * Draw and push frames to Whammy
+	     * @param {integer} frameInterval - set minimum interval (in milliseconds) between each time we push a frame to Whammy
+	     */
+	    function drawFrames(frameInterval) {
+	        frameInterval = typeof frameInterval !== 'undefined' ? frameInterval : 10;
+
+	        var duration = new Date().getTime() - lastTime;
+	        if (!duration) {
+	            return setTimeout(drawFrames, frameInterval, frameInterval);
+	        }
+
+	        if (isPausedRecording) {
+	            lastTime = new Date().getTime();
+	            return setTimeout(drawFrames, 100);
+	        }
+
+	        // via #206, by Jack i.e. @Seymourr
+	        lastTime = new Date().getTime();
+
+	        if (video.paused) {
+	            // via: https://github.com/muaz-khan/WebRTC-Experiment/pull/316
+	            // Tweak for Android Chrome
+	            video.play();
+	        }
+
+	        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+	        whammy.frames.push({
+	            duration: duration,
+	            image: canvas.toDataURL('image/webp')
+	        });
+
+	        if (!isStopDrawing) {
+	            setTimeout(drawFrames, frameInterval, frameInterval);
+	        }
+	    }
+
+	    function asyncLoop(o) {
+	        var i = -1,
+	            length = o.length;
+
+	        var loop = function() {
+	            i++;
+	            if (i === length) {
+	                o.callback();
+	                return;
+	            }
+	            o.functionToLoop(loop, i);
+	        };
+	        loop(); //init
+	    }
+
+
+	    /**
+	     * remove black frames from the beginning to the specified frame
+	     * @param {Array} _frames - array of frames to be checked
+	     * @param {number} _framesToCheck - number of frame until check will be executed (-1 - will drop all frames until frame not matched will be found)
+	     * @param {number} _pixTolerance - 0 - very strict (only black pixel color) ; 1 - all
+	     * @param {number} _frameTolerance - 0 - very strict (only black frame color) ; 1 - all
+	     * @returns {Array} - array of frames
+	     */
+	    // pull#293 by @volodalexey
+	    function dropBlackFrames(_frames, _framesToCheck, _pixTolerance, _frameTolerance, callback) {
+	        var localCanvas = document.createElement('canvas');
+	        localCanvas.width = canvas.width;
+	        localCanvas.height = canvas.height;
+	        var context2d = localCanvas.getContext('2d');
+	        var resultFrames = [];
+
+	        var checkUntilNotBlack = _framesToCheck === -1;
+	        var endCheckFrame = (_framesToCheck && _framesToCheck > 0 && _framesToCheck <= _frames.length) ?
+	            _framesToCheck : _frames.length;
+	        var sampleColor = {
+	            r: 0,
+	            g: 0,
+	            b: 0
+	        };
+	        var maxColorDifference = Math.sqrt(
+	            Math.pow(255, 2) +
+	            Math.pow(255, 2) +
+	            Math.pow(255, 2)
+	        );
+	        var pixTolerance = _pixTolerance && _pixTolerance >= 0 && _pixTolerance <= 1 ? _pixTolerance : 0;
+	        var frameTolerance = _frameTolerance && _frameTolerance >= 0 && _frameTolerance <= 1 ? _frameTolerance : 0;
+	        var doNotCheckNext = false;
+
+	        asyncLoop({
+	            length: endCheckFrame,
+	            functionToLoop: function(loop, f) {
+	                var matchPixCount, endPixCheck, maxPixCount;
+
+	                var finishImage = function() {
+	                    if (!doNotCheckNext && maxPixCount - matchPixCount <= maxPixCount * frameTolerance) {
+	                        // console.log('removed black frame : ' + f + ' ; frame duration ' + _frames[f].duration);
+	                    } else {
+	                        // console.log('frame is passed : ' + f);
+	                        if (checkUntilNotBlack) {
+	                            doNotCheckNext = true;
+	                        }
+	                        resultFrames.push(_frames[f]);
+	                    }
+	                    loop();
+	                };
+
+	                if (!doNotCheckNext) {
+	                    var image = new Image();
+	                    image.onload = function() {
+	                        context2d.drawImage(image, 0, 0, canvas.width, canvas.height);
+	                        var imageData = context2d.getImageData(0, 0, canvas.width, canvas.height);
+	                        matchPixCount = 0;
+	                        endPixCheck = imageData.data.length;
+	                        maxPixCount = imageData.data.length / 4;
+
+	                        for (var pix = 0; pix < endPixCheck; pix += 4) {
+	                            var currentColor = {
+	                                r: imageData.data[pix],
+	                                g: imageData.data[pix + 1],
+	                                b: imageData.data[pix + 2]
+	                            };
+	                            var colorDifference = Math.sqrt(
+	                                Math.pow(currentColor.r - sampleColor.r, 2) +
+	                                Math.pow(currentColor.g - sampleColor.g, 2) +
+	                                Math.pow(currentColor.b - sampleColor.b, 2)
+	                            );
+	                            // difference in color it is difference in color vectors (r1,g1,b1) <=> (r2,g2,b2)
+	                            if (colorDifference <= maxColorDifference * pixTolerance) {
+	                                matchPixCount++;
+	                            }
+	                        }
+	                        finishImage();
+	                    };
+	                    image.src = _frames[f].image;
+	                } else {
+	                    finishImage();
+	                }
+	            },
+	            callback: function() {
+	                resultFrames = resultFrames.concat(_frames.slice(endCheckFrame));
+
+	                if (resultFrames.length <= 0) {
+	                    // at least one last frame should be available for next manipulation
+	                    // if total duration of all frames will be < 1000 than ffmpeg doesn't work well...
+	                    resultFrames.push(_frames[_frames.length - 1]);
+	                }
+	                callback(resultFrames);
+	            }
+	        });
+	    }
+
+	    var isStopDrawing = false;
+
+	    /**
+	     * This method stops recording video.
+	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
+	     * @method
+	     * @memberof WhammyRecorder
+	     * @example
+	     * recorder.stop(function(blob) {
+	     *     video.src = URL.createObjectURL(blob);
+	     * });
+	     */
+	    this.stop = function(callback) {
+	        isStopDrawing = true;
+
+	        var _this = this;
+	        // analyse of all frames takes some time!
+	        setTimeout(function() {
+	            // e.g. dropBlackFrames(frames, 10, 1, 1) - will cut all 10 frames
+	            // e.g. dropBlackFrames(frames, 10, 0.5, 0.5) - will analyse 10 frames
+	            // e.g. dropBlackFrames(frames, 10) === dropBlackFrames(frames, 10, 0, 0) - will analyse 10 frames with strict black color
+	            dropBlackFrames(whammy.frames, -1, null, null, function(frames) {
+	                whammy.frames = frames;
+
+	                // to display advertisement images!
+	                if (config.advertisement && config.advertisement.length) {
+	                    whammy.frames = config.advertisement.concat(whammy.frames);
+	                }
+
+	                /**
+	                 * @property {Blob} blob - Recorded frames in video/webm blob.
+	                 * @memberof WhammyRecorder
+	                 * @example
+	                 * recorder.stop(function() {
+	                 *     var blob = recorder.blob;
+	                 * });
+	                 */
+	                whammy.compile(function(blob) {
+	                    _this.blob = blob;
+
+	                    if (_this.blob.forEach) {
+	                        _this.blob = new Blob([], {
+	                            type: 'video/webm'
+	                        });
+	                    }
+
+	                    if (callback) {
+	                        callback(_this.blob);
+	                    }
+	                });
+	            });
+	        }, 10);
+	    };
+
+	    var isPausedRecording = false;
+
+	    /**
+	     * This method pauses the recording process.
+	     * @method
+	     * @memberof WhammyRecorder
+	     * @example
+	     * recorder.pause();
+	     */
+	    this.pause = function() {
+	        isPausedRecording = true;
+	    };
+
+	    /**
+	     * This method resumes the recording process.
+	     * @method
+	     * @memberof WhammyRecorder
+	     * @example
+	     * recorder.resume();
+	     */
+	    this.resume = function() {
+	        isPausedRecording = false;
+	    };
+
+	    /**
+	     * This method resets currently recorded data.
+	     * @method
+	     * @memberof WhammyRecorder
+	     * @example
+	     * recorder.clearRecordedData();
+	     */
+	    this.clearRecordedData = function() {
+	        this.pause();
+	        whammy.frames = [];
+	    };
+
+	    var canvas = document.createElement('canvas');
+	    var context = canvas.getContext('2d');
+
+	    var video;
+	    var lastTime;
+	    var whammy;
+	}
+
+	// https://github.com/antimatter15/whammy/blob/master/LICENSE
+	// _________
+	// Whammy.js
+
+	// todo: Firefox now supports webp for webm containers!
+	// their MediaRecorder implementation works well!
+	// should we provide an option to record via Whammy.js or MediaRecorder API is a better solution?
+
+	/**
+	 * Whammy is a standalone class used by {@link RecordRTC} to bring video recording in Chrome. It is written by {@link https://github.com/antimatter15|antimatter15}
+	 * @summary A real time javascript webm encoder based on a canvas hack.
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @typedef Whammy
+	 * @class
+	 * @example
+	 * var recorder = new Whammy().Video(15);
+	 * recorder.add(context || canvas || dataURL);
+	 * var output = recorder.compile();
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 */
+
+	var Whammy = (function() {
+	    // a more abstract-ish API
+
+	    function WhammyVideo(duration) {
+	        this.frames = [];
+	        this.duration = duration || 1;
+	        this.quality = 0.8;
+	    }
+
+	    /**
+	     * Pass Canvas or Context or image/webp(string) to {@link Whammy} encoder.
+	     * @method
+	     * @memberof Whammy
+	     * @example
+	     * recorder = new Whammy().Video(0.8, 100);
+	     * recorder.add(canvas || context || 'image/webp');
+	     * @param {string} frame - Canvas || Context || image/webp
+	     * @param {number} duration - Stick a duration (in milliseconds)
+	     */
+	    WhammyVideo.prototype.add = function(frame, duration) {
+	        if ('canvas' in frame) { //CanvasRenderingContext2D
+	            frame = frame.canvas;
+	        }
+
+	        if ('toDataURL' in frame) {
+	            frame = frame.toDataURL('image/webp', this.quality);
+	        }
+
+	        if (!(/^data:image\/webp;base64,/ig).test(frame)) {
+	            throw 'Input must be formatted properly as a base64 encoded DataURI of type image/webp';
+	        }
+	        this.frames.push({
+	            image: frame,
+	            duration: duration || this.duration
+	        });
+	    };
+
+	    function processInWebWorker(_function) {
+	        var blob = URL.createObjectURL(new Blob([_function.toString(),
+	            'this.onmessage =  function (e) {' + _function.name + '(e.data);}'
+	        ], {
+	            type: 'application/javascript'
+	        }));
+
+	        var worker = new Worker(blob);
+	        URL.revokeObjectURL(blob);
+	        return worker;
+	    }
+
+	    function whammyInWebWorker(frames) {
+	        function ArrayToWebM(frames) {
+	            var info = checkFrames(frames);
+	            if (!info) {
+	                return [];
+	            }
+
+	            var clusterMaxDuration = 30000;
+
+	            var EBML = [{
+	                'id': 0x1a45dfa3, // EBML
+	                'data': [{
+	                    'data': 1,
+	                    'id': 0x4286 // EBMLVersion
+	                }, {
+	                    'data': 1,
+	                    'id': 0x42f7 // EBMLReadVersion
+	                }, {
+	                    'data': 4,
+	                    'id': 0x42f2 // EBMLMaxIDLength
+	                }, {
+	                    'data': 8,
+	                    'id': 0x42f3 // EBMLMaxSizeLength
+	                }, {
+	                    'data': 'webm',
+	                    'id': 0x4282 // DocType
+	                }, {
+	                    'data': 2,
+	                    'id': 0x4287 // DocTypeVersion
+	                }, {
+	                    'data': 2,
+	                    'id': 0x4285 // DocTypeReadVersion
+	                }]
+	            }, {
+	                'id': 0x18538067, // Segment
+	                'data': [{
+	                    'id': 0x1549a966, // Info
+	                    'data': [{
+	                        'data': 1e6, //do things in millisecs (num of nanosecs for duration scale)
+	                        'id': 0x2ad7b1 // TimecodeScale
+	                    }, {
+	                        'data': 'whammy',
+	                        'id': 0x4d80 // MuxingApp
+	                    }, {
+	                        'data': 'whammy',
+	                        'id': 0x5741 // WritingApp
+	                    }, {
+	                        'data': doubleToString(info.duration),
+	                        'id': 0x4489 // Duration
+	                    }]
+	                }, {
+	                    'id': 0x1654ae6b, // Tracks
+	                    'data': [{
+	                        'id': 0xae, // TrackEntry
+	                        'data': [{
+	                            'data': 1,
+	                            'id': 0xd7 // TrackNumber
+	                        }, {
+	                            'data': 1,
+	                            'id': 0x73c5 // TrackUID
+	                        }, {
+	                            'data': 0,
+	                            'id': 0x9c // FlagLacing
+	                        }, {
+	                            'data': 'und',
+	                            'id': 0x22b59c // Language
+	                        }, {
+	                            'data': 'V_VP8',
+	                            'id': 0x86 // CodecID
+	                        }, {
+	                            'data': 'VP8',
+	                            'id': 0x258688 // CodecName
+	                        }, {
+	                            'data': 1,
+	                            'id': 0x83 // TrackType
+	                        }, {
+	                            'id': 0xe0, // Video
+	                            'data': [{
+	                                'data': info.width,
+	                                'id': 0xb0 // PixelWidth
+	                            }, {
+	                                'data': info.height,
+	                                'id': 0xba // PixelHeight
+	                            }]
+	                        }]
+	                    }]
+	                }]
+	            }];
+
+	            //Generate clusters (max duration)
+	            var frameNumber = 0;
+	            var clusterTimecode = 0;
+	            while (frameNumber < frames.length) {
+
+	                var clusterFrames = [];
+	                var clusterDuration = 0;
+	                do {
+	                    clusterFrames.push(frames[frameNumber]);
+	                    clusterDuration += frames[frameNumber].duration;
+	                    frameNumber++;
+	                } while (frameNumber < frames.length && clusterDuration < clusterMaxDuration);
+
+	                var clusterCounter = 0;
+	                var cluster = {
+	                    'id': 0x1f43b675, // Cluster
+	                    'data': getClusterData(clusterTimecode, clusterCounter, clusterFrames)
+	                }; //Add cluster to segment
+	                EBML[1].data.push(cluster);
+	                clusterTimecode += clusterDuration;
+	            }
+
+	            return generateEBML(EBML);
+	        }
+
+	        function getClusterData(clusterTimecode, clusterCounter, clusterFrames) {
+	            return [{
+	                'data': clusterTimecode,
+	                'id': 0xe7 // Timecode
+	            }].concat(clusterFrames.map(function(webp) {
+	                var block = makeSimpleBlock({
+	                    discardable: 0,
+	                    frame: webp.data.slice(4),
+	                    invisible: 0,
+	                    keyframe: 1,
+	                    lacing: 0,
+	                    trackNum: 1,
+	                    timecode: Math.round(clusterCounter)
+	                });
+	                clusterCounter += webp.duration;
+	                return {
+	                    data: block,
+	                    id: 0xa3
+	                };
+	            }));
+	        }
+
+	        // sums the lengths of all the frames and gets the duration
+
+	        function checkFrames(frames) {
+	            if (!frames[0]) {
+	                postMessage({
+	                    error: 'Something went wrong. Maybe WebP format is not supported in the current browser.'
+	                });
+	                return;
+	            }
+
+	            var width = frames[0].width,
+	                height = frames[0].height,
+	                duration = frames[0].duration;
+
+	            for (var i = 1; i < frames.length; i++) {
+	                duration += frames[i].duration;
+	            }
+	            return {
+	                duration: duration,
+	                width: width,
+	                height: height
+	            };
+	        }
+
+	        function numToBuffer(num) {
+	            var parts = [];
+	            while (num > 0) {
+	                parts.push(num & 0xff);
+	                num = num >> 8;
+	            }
+	            return new Uint8Array(parts.reverse());
+	        }
+
+	        function strToBuffer(str) {
+	            return new Uint8Array(str.split('').map(function(e) {
+	                return e.charCodeAt(0);
+	            }));
+	        }
+
+	        function bitsToBuffer(bits) {
+	            var data = [];
+	            var pad = (bits.length % 8) ? (new Array(1 + 8 - (bits.length % 8))).join('0') : '';
+	            bits = pad + bits;
+	            for (var i = 0; i < bits.length; i += 8) {
+	                data.push(parseInt(bits.substr(i, 8), 2));
+	            }
+	            return new Uint8Array(data);
+	        }
+
+	        function generateEBML(json) {
+	            var ebml = [];
+	            for (var i = 0; i < json.length; i++) {
+	                var data = json[i].data;
+
+	                if (typeof data === 'object') {
+	                    data = generateEBML(data);
+	                }
+
+	                if (typeof data === 'number') {
+	                    data = bitsToBuffer(data.toString(2));
+	                }
+
+	                if (typeof data === 'string') {
+	                    data = strToBuffer(data);
+	                }
+
+	                var len = data.size || data.byteLength || data.length;
+	                var zeroes = Math.ceil(Math.ceil(Math.log(len) / Math.log(2)) / 8);
+	                var sizeToString = len.toString(2);
+	                var padded = (new Array((zeroes * 7 + 7 + 1) - sizeToString.length)).join('0') + sizeToString;
+	                var size = (new Array(zeroes)).join('0') + '1' + padded;
+
+	                ebml.push(numToBuffer(json[i].id));
+	                ebml.push(bitsToBuffer(size));
+	                ebml.push(data);
+	            }
+
+	            return new Blob(ebml, {
+	                type: 'video/webm'
+	            });
+	        }
+
+	        function toBinStrOld(bits) {
+	            var data = '';
+	            var pad = (bits.length % 8) ? (new Array(1 + 8 - (bits.length % 8))).join('0') : '';
+	            bits = pad + bits;
+	            for (var i = 0; i < bits.length; i += 8) {
+	                data += String.fromCharCode(parseInt(bits.substr(i, 8), 2));
+	            }
+	            return data;
+	        }
+
+	        function makeSimpleBlock(data) {
+	            var flags = 0;
+
+	            if (data.keyframe) {
+	                flags |= 128;
+	            }
+
+	            if (data.invisible) {
+	                flags |= 8;
+	            }
+
+	            if (data.lacing) {
+	                flags |= (data.lacing << 1);
+	            }
+
+	            if (data.discardable) {
+	                flags |= 1;
+	            }
+
+	            if (data.trackNum > 127) {
+	                throw 'TrackNumber > 127 not supported';
+	            }
+
+	            var out = [data.trackNum | 0x80, data.timecode >> 8, data.timecode & 0xff, flags].map(function(e) {
+	                return String.fromCharCode(e);
+	            }).join('') + data.frame;
+
+	            return out;
+	        }
+
+	        function parseWebP(riff) {
+	            var VP8 = riff.RIFF[0].WEBP[0];
+
+	            var frameStart = VP8.indexOf('\x9d\x01\x2a'); // A VP8 keyframe starts with the 0x9d012a header
+	            for (var i = 0, c = []; i < 4; i++) {
+	                c[i] = VP8.charCodeAt(frameStart + 3 + i);
+	            }
+
+	            var width, height, tmp;
+
+	            //the code below is literally copied verbatim from the bitstream spec
+	            tmp = (c[1] << 8) | c[0];
+	            width = tmp & 0x3FFF;
+	            tmp = (c[3] << 8) | c[2];
+	            height = tmp & 0x3FFF;
+	            return {
+	                width: width,
+	                height: height,
+	                data: VP8,
+	                riff: riff
+	            };
+	        }
+
+	        function getStrLength(string, offset) {
+	            return parseInt(string.substr(offset + 4, 4).split('').map(function(i) {
+	                var unpadded = i.charCodeAt(0).toString(2);
+	                return (new Array(8 - unpadded.length + 1)).join('0') + unpadded;
+	            }).join(''), 2);
+	        }
+
+	        function parseRIFF(string) {
+	            var offset = 0;
+	            var chunks = {};
+
+	            while (offset < string.length) {
+	                var id = string.substr(offset, 4);
+	                var len = getStrLength(string, offset);
+	                var data = string.substr(offset + 4 + 4, len);
+	                offset += 4 + 4 + len;
+	                chunks[id] = chunks[id] || [];
+
+	                if (id === 'RIFF' || id === 'LIST') {
+	                    chunks[id].push(parseRIFF(data));
+	                } else {
+	                    chunks[id].push(data);
+	                }
+	            }
+	            return chunks;
+	        }
+
+	        function doubleToString(num) {
+	            return [].slice.call(
+	                new Uint8Array((new Float64Array([num])).buffer), 0).map(function(e) {
+	                return String.fromCharCode(e);
+	            }).reverse().join('');
+	        }
+
+	        var webm = new ArrayToWebM(frames.map(function(frame) {
+	            var webp = parseWebP(parseRIFF(atob(frame.image.slice(23))));
+	            webp.duration = frame.duration;
+	            return webp;
+	        }));
+
+	        if (!!navigator.mozGetUserMedia) {
+	            return webm;
+	        }
+
+	        postMessage(webm);
+	    }
+
+	    /**
+	     * Encodes frames in WebM container. It uses WebWorkinvoke to invoke 'ArrayToWebM' method.
+	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
+	     * @method
+	     * @memberof Whammy
+	     * @example
+	     * recorder = new Whammy().Video(0.8, 100);
+	     * recorder.compile(function(blob) {
+	     *    // blob.size - blob.type
+	     * });
+	     */
+	    WhammyVideo.prototype.compile = function(callback) {
+	        if (!!navigator.mozGetUserMedia) {
+	            callback(whammyInWebWorker(this.frames));
+	            return;
+	        }
+	        var webWorker = processInWebWorker(whammyInWebWorker);
+
+	        webWorker.onmessage = function(event) {
+	            if (event.data.error) {
+	                console.error(event.data.error);
+	                return;
+	            }
+	            callback(event.data);
+	        };
+
+	        webWorker.postMessage(this.frames);
+	    };
+
+	    return {
+	        /**
+	         * A more abstract-ish API.
+	         * @method
+	         * @memberof Whammy
+	         * @example
+	         * recorder = new Whammy().Video(0.8, 100);
+	         * @param {?number} speed - 0.8
+	         * @param {?number} quality - 100
+	         */
+	        Video: WhammyVideo
+	    };
+	})();
+
+	// ______________ (indexed-db)
+	// DiskStorage.js
+
+	/**
+	 * DiskStorage is a standalone object used by {@link RecordRTC} to store recorded blobs in IndexedDB storage.
+	 * @summary Writing blobs into IndexedDB.
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @example
+	 * DiskStorage.Store({
+	 *     audioBlob: yourAudioBlob,
+	 *     videoBlob: yourVideoBlob,
+	 *     gifBlob  : yourGifBlob
+	 * });
+	 * DiskStorage.Fetch(function(dataURL, type) {
+	 *     if(type === 'audioBlob') { }
+	 *     if(type === 'videoBlob') { }
+	 *     if(type === 'gifBlob')   { }
+	 * });
+	 * // DiskStorage.dataStoreName = 'recordRTC';
+	 * // DiskStorage.onError = function(error) { };
+	 * @property {function} init - This method must be called once to initialize IndexedDB ObjectStore. Though, it is auto-used internally.
+	 * @property {function} Fetch - This method fetches stored blobs from IndexedDB.
+	 * @property {function} Store - This method stores blobs in IndexedDB.
+	 * @property {function} onError - This function is invoked for any known/unknown error.
+	 * @property {string} dataStoreName - Name of the ObjectStore created in IndexedDB storage.
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 */
+
+
+	var DiskStorage = {
+	    /**
+	     * This method must be called once to initialize IndexedDB ObjectStore. Though, it is auto-used internally.
+	     * @method
+	     * @memberof DiskStorage
+	     * @internal
+	     * @example
+	     * DiskStorage.init();
+	     */
+	    init: function() {
+	        var self = this;
+
+	        if (typeof indexedDB === 'undefined' || typeof indexedDB.open === 'undefined') {
+	            console.error('IndexedDB API are not available in this browser.');
+	            return;
+	        }
+
+	        if (typeof webkitIndexedDB !== 'undefined') {
+	            indexedDB = webkitIndexedDB;
+	        }
+
+	        if (typeof mozIndexedDB !== 'undefined') {
+	            indexedDB = mozIndexedDB;
+	        }
+
+	        if (typeof OIndexedDB !== 'undefined') {
+	            indexedDB = OIndexedDB;
+	        }
+
+	        if (typeof msIndexedDB !== 'undefined') {
+	            indexedDB = msIndexedDB;
+	        }
+
+	        var dbVersion = 1;
+	        var dbName = this.dbName || location.href.replace(/\/|:|#|%|\.|\[|\]/g, ''),
+	            db;
+	        var request = indexedDB.open(dbName, dbVersion);
+
+	        function createObjectStore(dataBase) {
+	            dataBase.createObjectStore(self.dataStoreName);
+	        }
+
+	        function putInDB() {
+	            var transaction = db.transaction([self.dataStoreName], 'readwrite');
+
+	            if (self.videoBlob) {
+	                transaction.objectStore(self.dataStoreName).put(self.videoBlob, 'videoBlob');
+	            }
+
+	            if (self.gifBlob) {
+	                transaction.objectStore(self.dataStoreName).put(self.gifBlob, 'gifBlob');
+	            }
+
+	            if (self.audioBlob) {
+	                transaction.objectStore(self.dataStoreName).put(self.audioBlob, 'audioBlob');
+	            }
+
+	            function getFromStore(portionName) {
+	                transaction.objectStore(self.dataStoreName).get(portionName).onsuccess = function(event) {
+	                    if (self.callback) {
+	                        self.callback(event.target.result, portionName);
+	                    }
+	                };
+	            }
+
+	            getFromStore('audioBlob');
+	            getFromStore('videoBlob');
+	            getFromStore('gifBlob');
+	        }
+
+	        request.onerror = self.onError;
+
+	        request.onsuccess = function() {
+	            db = request.result;
+	            db.onerror = self.onError;
+
+	            if (db.setVersion) {
+	                if (db.version !== dbVersion) {
+	                    var setVersion = db.setVersion(dbVersion);
+	                    setVersion.onsuccess = function() {
+	                        createObjectStore(db);
+	                        putInDB();
+	                    };
+	                } else {
+	                    putInDB();
+	                }
+	            } else {
+	                putInDB();
+	            }
+	        };
+	        request.onupgradeneeded = function(event) {
+	            createObjectStore(event.target.result);
+	        };
+	    },
+	    /**
+	     * This method fetches stored blobs from IndexedDB.
+	     * @method
+	     * @memberof DiskStorage
+	     * @internal
+	     * @example
+	     * DiskStorage.Fetch(function(dataURL, type) {
+	     *     if(type === 'audioBlob') { }
+	     *     if(type === 'videoBlob') { }
+	     *     if(type === 'gifBlob')   { }
+	     * });
+	     */
+	    Fetch: function(callback) {
+	        this.callback = callback;
+	        this.init();
+
+	        return this;
+	    },
+	    /**
+	     * This method stores blobs in IndexedDB.
+	     * @method
+	     * @memberof DiskStorage
+	     * @internal
+	     * @example
+	     * DiskStorage.Store({
+	     *     audioBlob: yourAudioBlob,
+	     *     videoBlob: yourVideoBlob,
+	     *     gifBlob  : yourGifBlob
+	     * });
+	     */
+	    Store: function(config) {
+	        this.audioBlob = config.audioBlob;
+	        this.videoBlob = config.videoBlob;
+	        this.gifBlob = config.gifBlob;
+
+	        this.init();
+
+	        return this;
+	    },
+	    /**
+	     * This function is invoked for any known/unknown error.
+	     * @method
+	     * @memberof DiskStorage
+	     * @internal
+	     * @example
+	     * DiskStorage.onError = function(error){
+	     *     alerot( JSON.stringify(error) );
+	     * };
+	     */
+	    onError: function(error) {
+	        console.error(JSON.stringify(error, null, '\t'));
+	    },
+
+	    /**
+	     * @property {string} dataStoreName - Name of the ObjectStore created in IndexedDB storage.
+	     * @memberof DiskStorage
+	     * @internal
+	     * @example
+	     * DiskStorage.dataStoreName = 'recordRTC';
+	     */
+	    dataStoreName: 'recordRTC',
+	    dbName: null
+	};
+
+	// ______________
+	// GifRecorder.js
+
+	/**
+	 * GifRecorder is standalone calss used by {@link RecordRTC} to record video or canvas into animated gif.
+	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
+	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
+	 * @typedef GifRecorder
+	 * @class
+	 * @example
+	 * var recorder = new GifRecorder(mediaStream || canvas || context, { width: 1280, height: 720, frameRate: 200, quality: 10 });
+	 * recorder.record();
+	 * recorder.stop(function(blob) {
+	 *     img.src = URL.createObjectURL(blob);
+	 * });
+	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
+	 * @param {MediaStream} mediaStream - MediaStream object or HTMLCanvasElement or CanvasRenderingContext2D.
+	 * @param {object} config - {disableLogs:true, initCallback: function, width: 320, height: 240, frameRate: 200, quality: 10}
+	 */
+
+	function GifRecorder(mediaStream, config) {
+	    if (typeof GIFEncoder === 'undefined') {
+	        throw 'Please link: https://cdn.webrtc-experiment.com/gif-recorder.js';
+	    }
+
+	    config = config || {};
+
+	    var isHTMLObject = mediaStream instanceof CanvasRenderingContext2D || mediaStream instanceof HTMLCanvasElement;
+
+	    /**
+	     * This method records MediaStream.
+	     * @method
+	     * @memberof GifRecorder
+	     * @example
+	     * recorder.record();
+	     */
+	    this.record = function() {
+	        if (!isHTMLObject) {
+	            if (!config.width) {
+	                config.width = video.offsetWidth || 320;
+	            }
+
+	            if (!this.height) {
+	                config.height = video.offsetHeight || 240;
+	            }
+
+	            if (!config.video) {
+	                config.video = {
+	                    width: config.width,
+	                    height: config.height
+	                };
+	            }
+
+	            if (!config.canvas) {
+	                config.canvas = {
+	                    width: config.width,
+	                    height: config.height
+	                };
+	            }
+
+	            canvas.width = config.canvas.width;
+	            canvas.height = config.canvas.height;
+
+	            video.width = config.video.width;
+	            video.height = config.video.height;
+	        }
+
+	        // external library to record as GIF images
+	        gifEncoder = new GIFEncoder();
+
+	        // void setRepeat(int iter) 
+	        // Sets the number of times the set of GIF frames should be played. 
+	        // Default is 1; 0 means play indefinitely.
+	        gifEncoder.setRepeat(0);
+
+	        // void setFrameRate(Number fps) 
+	        // Sets frame rate in frames per second. 
+	        // Equivalent to setDelay(1000/fps).
+	        // Using "setDelay" instead of "setFrameRate"
+	        gifEncoder.setDelay(config.frameRate || 200);
+
+	        // void setQuality(int quality) 
+	        // Sets quality of color quantization (conversion of images to the 
+	        // maximum 256 colors allowed by the GIF specification). 
+	        // Lower values (minimum = 1) produce better colors, 
+	        // but slow processing significantly. 10 is the default, 
+	        // and produces good color mapping at reasonable speeds. 
+	        // Values greater than 20 do not yield significant improvements in speed.
+	        gifEncoder.setQuality(config.quality || 10);
+
+	        // Boolean start() 
+	        // This writes the GIF Header and returns false if it fails.
+	        gifEncoder.start();
+
+	        startTime = Date.now();
+
+	        var self = this;
+
+	        function drawVideoFrame(time) {
+	            if (isPausedRecording) {
+	                return setTimeout(function() {
+	                    drawVideoFrame(time);
+	                }, 100);
+	            }
+
+	            lastAnimationFrame = requestAnimationFrame(drawVideoFrame);
+
+	            if (typeof lastFrameTime === undefined) {
+	                lastFrameTime = time;
+	            }
+
+	            // ~10 fps
+	            if (time - lastFrameTime < 90) {
+	                return;
+	            }
+
+	            if (!isHTMLObject && video.paused) {
+	                // via: https://github.com/muaz-khan/WebRTC-Experiment/pull/316
+	                // Tweak for Android Chrome
+	                video.play();
+	            }
+
+	            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+	            if (config.onGifPreview) {
+	                config.onGifPreview(canvas.toDataURL('image/png'));
+	            }
+
+	            gifEncoder.addFrame(context);
+	            lastFrameTime = time;
+	        }
+
+	        lastAnimationFrame = requestAnimationFrame(drawVideoFrame);
+
+	        if (config.initCallback) {
+	            config.initCallback();
+	        }
+	    };
+
+	    /**
+	     * This method stops recording MediaStream.
+	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
+	     * @method
+	     * @memberof GifRecorder
+	     * @example
+	     * recorder.stop(function(blob) {
+	     *     img.src = URL.createObjectURL(blob);
+	     * });
+	     */
+	    this.stop = function() {
+	        if (lastAnimationFrame) {
+	            cancelAnimationFrame(lastAnimationFrame);
+	        }
+
+	        endTime = Date.now();
+
+	        /**
+	         * @property {Blob} blob - The recorded blob object.
+	         * @memberof GifRecorder
+	         * @example
+	         * recorder.stop(function(){
+	         *     var blob = recorder.blob;
+	         * });
+	         */
+	        this.blob = new Blob([new Uint8Array(gifEncoder.stream().bin)], {
+	            type: 'image/gif'
+	        });
+
+	        // bug: find a way to clear old recorded blobs
+	        gifEncoder.stream().bin = [];
+	    };
+
+	    var isPausedRecording = false;
+
+	    /**
+	     * This method pauses the recording process.
+	     * @method
+	     * @memberof GifRecorder
+	     * @example
+	     * recorder.pause();
+	     */
+	    this.pause = function() {
+	        isPausedRecording = true;
+	    };
+
+	    /**
+	     * This method resumes the recording process.
+	     * @method
+	     * @memberof GifRecorder
+	     * @example
+	     * recorder.resume();
+	     */
+	    this.resume = function() {
+	        isPausedRecording = false;
+	    };
+
+	    /**
+	     * This method resets currently recorded data.
+	     * @method
+	     * @memberof GifRecorder
+	     * @example
+	     * recorder.clearRecordedData();
+	     */
+	    this.clearRecordedData = function() {
+	        if (!gifEncoder) {
+	            return;
+	        }
+
+	        this.pause();
+
+	        gifEncoder.stream().bin = [];
+	    };
+
+	    var canvas = document.createElement('canvas');
+	    var context = canvas.getContext('2d');
+
+	    if (isHTMLObject) {
+	        if (mediaStream instanceof CanvasRenderingContext2D) {
+	            context = mediaStream;
+	        } else if (mediaStream instanceof HTMLCanvasElement) {
+	            context = mediaStream.getContext('2d');
+	        }
+	    }
+
+	    if (!isHTMLObject) {
+	        var video = document.createElement('video');
+	        video.muted = true;
+	        video.autoplay = true;
+
+	        if (typeof video.srcObject !== 'undefined') {
+	            video.srcObject = mediaStream;
+	        } else {
+	            video.src = URL.createObjectURL(mediaStream);
+	        }
+
+	        video.play();
+	    }
+
+	    var lastAnimationFrame = null;
+	    var startTime, endTime, lastFrameTime;
+
+	    var gifEncoder;
+	}
+
+
+/***/ },
+/* 6 */
+/***/ function(module, exports, __webpack_require__) {
+
+	var require;var __WEBPACK_AMD_DEFINE_RESULT__;/* WEBPACK VAR INJECTION */(function(process, global, module) {/*!
+	 * @overview RSVP - a tiny implementation of Promises/A+.
+	 * @copyright Copyright (c) 2014 Yehuda Katz, Tom Dale, Stefan Penner and contributors
+	 * @license   Licensed under MIT license
+	 *            See https://raw.githubusercontent.com/tildeio/rsvp.js/master/LICENSE
+	 * @version   3.1.0
+	 */
+
+	(function() {
+	    "use strict";
+	    function lib$rsvp$utils$$objectOrFunction(x) {
+	      return typeof x === 'function' || (typeof x === 'object' && x !== null);
+	    }
+
+	    function lib$rsvp$utils$$isFunction(x) {
+	      return typeof x === 'function';
+	    }
+
+	    function lib$rsvp$utils$$isMaybeThenable(x) {
+	      return typeof x === 'object' && x !== null;
+	    }
+
+	    var lib$rsvp$utils$$_isArray;
+	    if (!Array.isArray) {
+	      lib$rsvp$utils$$_isArray = function (x) {
+	        return Object.prototype.toString.call(x) === '[object Array]';
+	      };
+	    } else {
+	      lib$rsvp$utils$$_isArray = Array.isArray;
+	    }
+
+	    var lib$rsvp$utils$$isArray = lib$rsvp$utils$$_isArray;
+
+	    var lib$rsvp$utils$$now = Date.now || function() { return new Date().getTime(); };
+
+	    function lib$rsvp$utils$$F() { }
+
+	    var lib$rsvp$utils$$o_create = (Object.create || function (o) {
+	      if (arguments.length > 1) {
+	        throw new Error('Second argument not supported');
+	      }
+	      if (typeof o !== 'object') {
+	        throw new TypeError('Argument must be an object');
+	      }
+	      lib$rsvp$utils$$F.prototype = o;
+	      return new lib$rsvp$utils$$F();
+	    });
+	    function lib$rsvp$events$$indexOf(callbacks, callback) {
+	      for (var i=0, l=callbacks.length; i<l; i++) {
+	        if (callbacks[i] === callback) { return i; }
+	      }
+
+	      return -1;
+	    }
+
+	    function lib$rsvp$events$$callbacksFor(object) {
+	      var callbacks = object._promiseCallbacks;
+
+	      if (!callbacks) {
+	        callbacks = object._promiseCallbacks = {};
+	      }
+
+	      return callbacks;
+	    }
+
+	    var lib$rsvp$events$$default = {
+
+	      /**
+	        `RSVP.EventTarget.mixin` extends an object with EventTarget methods. For
+	        Example:
+
+	        ```javascript
+	        var object = {};
+
+	        RSVP.EventTarget.mixin(object);
+
+	        object.on('finished', function(event) {
+	          // handle event
+	        });
+
+	        object.trigger('finished', { detail: value });
+	        ```
+
+	        `EventTarget.mixin` also works with prototypes:
+
+	        ```javascript
+	        var Person = function() {};
+	        RSVP.EventTarget.mixin(Person.prototype);
+
+	        var yehuda = new Person();
+	        var tom = new Person();
+
+	        yehuda.on('poke', function(event) {
+	          console.log('Yehuda says OW');
+	        });
+
+	        tom.on('poke', function(event) {
+	          console.log('Tom says OW');
+	        });
+
+	        yehuda.trigger('poke');
+	        tom.trigger('poke');
+	        ```
+
+	        @method mixin
+	        @for RSVP.EventTarget
+	        @private
+	        @param {Object} object object to extend with EventTarget methods
+	      */
+	      'mixin': function(object) {
+	        object['on']      = this['on'];
+	        object['off']     = this['off'];
+	        object['trigger'] = this['trigger'];
+	        object._promiseCallbacks = undefined;
+	        return object;
+	      },
+
+	      /**
+	        Registers a callback to be executed when `eventName` is triggered
+
+	        ```javascript
+	        object.on('event', function(eventInfo){
+	          // handle the event
+	        });
+
+	        object.trigger('event');
+	        ```
+
+	        @method on
+	        @for RSVP.EventTarget
+	        @private
+	        @param {String} eventName name of the event to listen for
+	        @param {Function} callback function to be called when the event is triggered.
+	      */
+	      'on': function(eventName, callback) {
+	        if (typeof callback !== 'function') {
+	          throw new TypeError('Callback must be a function');
+	        }
+
+	        var allCallbacks = lib$rsvp$events$$callbacksFor(this), callbacks;
+
+	        callbacks = allCallbacks[eventName];
+
+	        if (!callbacks) {
+	          callbacks = allCallbacks[eventName] = [];
+	        }
+
+	        if (lib$rsvp$events$$indexOf(callbacks, callback) === -1) {
+	          callbacks.push(callback);
+	        }
+	      },
+
+	      /**
+	        You can use `off` to stop firing a particular callback for an event:
+
+	        ```javascript
+	        function doStuff() { // do stuff! }
+	        object.on('stuff', doStuff);
+
+	        object.trigger('stuff'); // doStuff will be called
+
+	        // Unregister ONLY the doStuff callback
+	        object.off('stuff', doStuff);
+	        object.trigger('stuff'); // doStuff will NOT be called
+	        ```
+
+	        If you don't pass a `callback` argument to `off`, ALL callbacks for the
+	        event will not be executed when the event fires. For example:
+
+	        ```javascript
+	        var callback1 = function(){};
+	        var callback2 = function(){};
+
+	        object.on('stuff', callback1);
+	        object.on('stuff', callback2);
+
+	        object.trigger('stuff'); // callback1 and callback2 will be executed.
+
+	        object.off('stuff');
+	        object.trigger('stuff'); // callback1 and callback2 will not be executed!
+	        ```
+
+	        @method off
+	        @for RSVP.EventTarget
+	        @private
+	        @param {String} eventName event to stop listening to
+	        @param {Function} callback optional argument. If given, only the function
+	        given will be removed from the event's callback queue. If no `callback`
+	        argument is given, all callbacks will be removed from the event's callback
+	        queue.
+	      */
+	      'off': function(eventName, callback) {
+	        var allCallbacks = lib$rsvp$events$$callbacksFor(this), callbacks, index;
+
+	        if (!callback) {
+	          allCallbacks[eventName] = [];
+	          return;
+	        }
+
+	        callbacks = allCallbacks[eventName];
+
+	        index = lib$rsvp$events$$indexOf(callbacks, callback);
+
+	        if (index !== -1) { callbacks.splice(index, 1); }
+	      },
+
+	      /**
+	        Use `trigger` to fire custom events. For example:
+
+	        ```javascript
+	        object.on('foo', function(){
+	          console.log('foo event happened!');
+	        });
+	        object.trigger('foo');
+	        // 'foo event happened!' logged to the console
+	        ```
+
+	        You can also pass a value as a second argument to `trigger` that will be
+	        passed as an argument to all event listeners for the event:
+
+	        ```javascript
+	        object.on('foo', function(value){
+	          console.log(value.name);
+	        });
+
+	        object.trigger('foo', { name: 'bar' });
+	        // 'bar' logged to the console
+	        ```
+
+	        @method trigger
+	        @for RSVP.EventTarget
+	        @private
+	        @param {String} eventName name of the event to be triggered
+	        @param {*} options optional value to be passed to any event handlers for
+	        the given `eventName`
+	      */
+	      'trigger': function(eventName, options, label) {
+	        var allCallbacks = lib$rsvp$events$$callbacksFor(this), callbacks, callback;
+
+	        if (callbacks = allCallbacks[eventName]) {
+	          // Don't cache the callbacks.length since it may grow
+	          for (var i=0; i<callbacks.length; i++) {
+	            callback = callbacks[i];
+
+	            callback(options, label);
+	          }
+	        }
+	      }
+	    };
+
+	    var lib$rsvp$config$$config = {
+	      instrument: false
+	    };
+
+	    lib$rsvp$events$$default['mixin'](lib$rsvp$config$$config);
+
+	    function lib$rsvp$config$$configure(name, value) {
+	      if (name === 'onerror') {
+	        // handle for legacy users that expect the actual
+	        // error to be passed to their function added via
+	        // `RSVP.configure('onerror', someFunctionHere);`
+	        lib$rsvp$config$$config['on']('error', value);
+	        return;
+	      }
+
+	      if (arguments.length === 2) {
+	        lib$rsvp$config$$config[name] = value;
+	      } else {
+	        return lib$rsvp$config$$config[name];
+	      }
+	    }
+
+	    var lib$rsvp$instrument$$queue = [];
+
+	    function lib$rsvp$instrument$$scheduleFlush() {
+	      setTimeout(function() {
+	        var entry;
+	        for (var i = 0; i < lib$rsvp$instrument$$queue.length; i++) {
+	          entry = lib$rsvp$instrument$$queue[i];
+
+	          var payload = entry.payload;
+
+	          payload.guid = payload.key + payload.id;
+	          payload.childGuid = payload.key + payload.childId;
+	          if (payload.error) {
+	            payload.stack = payload.error.stack;
+	          }
+
+	          lib$rsvp$config$$config['trigger'](entry.name, entry.payload);
+	        }
+	        lib$rsvp$instrument$$queue.length = 0;
+	      }, 50);
+	    }
+
+	    function lib$rsvp$instrument$$instrument(eventName, promise, child) {
+	      if (1 === lib$rsvp$instrument$$queue.push({
+	        name: eventName,
+	        payload: {
+	          key: promise._guidKey,
+	          id:  promise._id,
+	          eventName: eventName,
+	          detail: promise._result,
+	          childId: child && child._id,
+	          label: promise._label,
+	          timeStamp: lib$rsvp$utils$$now(),
+	          error: lib$rsvp$config$$config["instrument-with-stack"] ? new Error(promise._label) : null
+	        }})) {
+	          lib$rsvp$instrument$$scheduleFlush();
+	        }
+	      }
+	    var lib$rsvp$instrument$$default = lib$rsvp$instrument$$instrument;
+
+	    function  lib$rsvp$$internal$$withOwnPromise() {
+	      return new TypeError('A promises callback cannot return that same promise.');
+	    }
+
+	    function lib$rsvp$$internal$$noop() {}
+
+	    var lib$rsvp$$internal$$PENDING   = void 0;
+	    var lib$rsvp$$internal$$FULFILLED = 1;
+	    var lib$rsvp$$internal$$REJECTED  = 2;
+
+	    var lib$rsvp$$internal$$GET_THEN_ERROR = new lib$rsvp$$internal$$ErrorObject();
+
+	    function lib$rsvp$$internal$$getThen(promise) {
+	      try {
+	        return promise.then;
+	      } catch(error) {
+	        lib$rsvp$$internal$$GET_THEN_ERROR.error = error;
+	        return lib$rsvp$$internal$$GET_THEN_ERROR;
+	      }
+	    }
+
+	    function lib$rsvp$$internal$$tryThen(then, value, fulfillmentHandler, rejectionHandler) {
+	      try {
+	        then.call(value, fulfillmentHandler, rejectionHandler);
+	      } catch(e) {
+	        return e;
+	      }
+	    }
+
+	    function lib$rsvp$$internal$$handleForeignThenable(promise, thenable, then) {
+	      lib$rsvp$config$$config.async(function(promise) {
+	        var sealed = false;
+	        var error = lib$rsvp$$internal$$tryThen(then, thenable, function(value) {
+	          if (sealed) { return; }
+	          sealed = true;
+	          if (thenable !== value) {
+	            lib$rsvp$$internal$$resolve(promise, value);
+	          } else {
+	            lib$rsvp$$internal$$fulfill(promise, value);
+	          }
+	        }, function(reason) {
+	          if (sealed) { return; }
+	          sealed = true;
+
+	          lib$rsvp$$internal$$reject(promise, reason);
+	        }, 'Settle: ' + (promise._label || ' unknown promise'));
+
+	        if (!sealed && error) {
+	          sealed = true;
+	          lib$rsvp$$internal$$reject(promise, error);
+	        }
+	      }, promise);
+	    }
+
+	    function lib$rsvp$$internal$$handleOwnThenable(promise, thenable) {
+	      if (thenable._state === lib$rsvp$$internal$$FULFILLED) {
+	        lib$rsvp$$internal$$fulfill(promise, thenable._result);
+	      } else if (thenable._state === lib$rsvp$$internal$$REJECTED) {
+	        thenable._onError = null;
+	        lib$rsvp$$internal$$reject(promise, thenable._result);
+	      } else {
+	        lib$rsvp$$internal$$subscribe(thenable, undefined, function(value) {
+	          if (thenable !== value) {
+	            lib$rsvp$$internal$$resolve(promise, value);
+	          } else {
+	            lib$rsvp$$internal$$fulfill(promise, value);
+	          }
+	        }, function(reason) {
+	          lib$rsvp$$internal$$reject(promise, reason);
+	        });
+	      }
+	    }
+
+	    function lib$rsvp$$internal$$handleMaybeThenable(promise, maybeThenable) {
+	      if (maybeThenable.constructor === promise.constructor) {
+	        lib$rsvp$$internal$$handleOwnThenable(promise, maybeThenable);
+	      } else {
+	        var then = lib$rsvp$$internal$$getThen(maybeThenable);
+
+	        if (then === lib$rsvp$$internal$$GET_THEN_ERROR) {
+	          lib$rsvp$$internal$$reject(promise, lib$rsvp$$internal$$GET_THEN_ERROR.error);
+	        } else if (then === undefined) {
+	          lib$rsvp$$internal$$fulfill(promise, maybeThenable);
+	        } else if (lib$rsvp$utils$$isFunction(then)) {
+	          lib$rsvp$$internal$$handleForeignThenable(promise, maybeThenable, then);
+	        } else {
+	          lib$rsvp$$internal$$fulfill(promise, maybeThenable);
+	        }
+	      }
+	    }
+
+	    function lib$rsvp$$internal$$resolve(promise, value) {
+	      if (promise === value) {
+	        lib$rsvp$$internal$$fulfill(promise, value);
+	      } else if (lib$rsvp$utils$$objectOrFunction(value)) {
+	        lib$rsvp$$internal$$handleMaybeThenable(promise, value);
+	      } else {
+	        lib$rsvp$$internal$$fulfill(promise, value);
+	      }
+	    }
+
+	    function lib$rsvp$$internal$$publishRejection(promise) {
+	      if (promise._onError) {
+	        promise._onError(promise._result);
+	      }
+
+	      lib$rsvp$$internal$$publish(promise);
+	    }
+
+	    function lib$rsvp$$internal$$fulfill(promise, value) {
+	      if (promise._state !== lib$rsvp$$internal$$PENDING) { return; }
+
+	      promise._result = value;
+	      promise._state = lib$rsvp$$internal$$FULFILLED;
+
+	      if (promise._subscribers.length === 0) {
+	        if (lib$rsvp$config$$config.instrument) {
+	          lib$rsvp$instrument$$default('fulfilled', promise);
+	        }
+	      } else {
+	        lib$rsvp$config$$config.async(lib$rsvp$$internal$$publish, promise);
+	      }
+	    }
+
+	    function lib$rsvp$$internal$$reject(promise, reason) {
+	      if (promise._state !== lib$rsvp$$internal$$PENDING) { return; }
+	      promise._state = lib$rsvp$$internal$$REJECTED;
+	      promise._result = reason;
+	      lib$rsvp$config$$config.async(lib$rsvp$$internal$$publishRejection, promise);
+	    }
+
+	    function lib$rsvp$$internal$$subscribe(parent, child, onFulfillment, onRejection) {
+	      var subscribers = parent._subscribers;
+	      var length = subscribers.length;
+
+	      parent._onError = null;
+
+	      subscribers[length] = child;
+	      subscribers[length + lib$rsvp$$internal$$FULFILLED] = onFulfillment;
+	      subscribers[length + lib$rsvp$$internal$$REJECTED]  = onRejection;
+
+	      if (length === 0 && parent._state) {
+	        lib$rsvp$config$$config.async(lib$rsvp$$internal$$publish, parent);
+	      }
+	    }
+
+	    function lib$rsvp$$internal$$publish(promise) {
+	      var subscribers = promise._subscribers;
+	      var settled = promise._state;
+
+	      if (lib$rsvp$config$$config.instrument) {
+	        lib$rsvp$instrument$$default(settled === lib$rsvp$$internal$$FULFILLED ? 'fulfilled' : 'rejected', promise);
+	      }
+
+	      if (subscribers.length === 0) { return; }
+
+	      var child, callback, detail = promise._result;
+
+	      for (var i = 0; i < subscribers.length; i += 3) {
+	        child = subscribers[i];
+	        callback = subscribers[i + settled];
+
+	        if (child) {
+	          lib$rsvp$$internal$$invokeCallback(settled, child, callback, detail);
+	        } else {
+	          callback(detail);
+	        }
+	      }
+
+	      promise._subscribers.length = 0;
+	    }
+
+	    function lib$rsvp$$internal$$ErrorObject() {
+	      this.error = null;
+	    }
+
+	    var lib$rsvp$$internal$$TRY_CATCH_ERROR = new lib$rsvp$$internal$$ErrorObject();
+
+	    function lib$rsvp$$internal$$tryCatch(callback, detail) {
+	      try {
+	        return callback(detail);
+	      } catch(e) {
+	        lib$rsvp$$internal$$TRY_CATCH_ERROR.error = e;
+	        return lib$rsvp$$internal$$TRY_CATCH_ERROR;
+	      }
+	    }
+
+	    function lib$rsvp$$internal$$invokeCallback(settled, promise, callback, detail) {
+	      var hasCallback = lib$rsvp$utils$$isFunction(callback),
+	          value, error, succeeded, failed;
+
+	      if (hasCallback) {
+	        value = lib$rsvp$$internal$$tryCatch(callback, detail);
+
+	        if (value === lib$rsvp$$internal$$TRY_CATCH_ERROR) {
+	          failed = true;
+	          error = value.error;
+	          value = null;
+	        } else {
+	          succeeded = true;
+	        }
+
+	        if (promise === value) {
+	          lib$rsvp$$internal$$reject(promise, lib$rsvp$$internal$$withOwnPromise());
+	          return;
+	        }
+
+	      } else {
+	        value = detail;
+	        succeeded = true;
+	      }
+
+	      if (promise._state !== lib$rsvp$$internal$$PENDING) {
+	        // noop
+	      } else if (hasCallback && succeeded) {
+	        lib$rsvp$$internal$$resolve(promise, value);
+	      } else if (failed) {
+	        lib$rsvp$$internal$$reject(promise, error);
+	      } else if (settled === lib$rsvp$$internal$$FULFILLED) {
+	        lib$rsvp$$internal$$fulfill(promise, value);
+	      } else if (settled === lib$rsvp$$internal$$REJECTED) {
+	        lib$rsvp$$internal$$reject(promise, value);
+	      }
+	    }
+
+	    function lib$rsvp$$internal$$initializePromise(promise, resolver) {
+	      var resolved = false;
+	      try {
+	        resolver(function resolvePromise(value){
+	          if (resolved) { return; }
+	          resolved = true;
+	          lib$rsvp$$internal$$resolve(promise, value);
+	        }, function rejectPromise(reason) {
+	          if (resolved) { return; }
+	          resolved = true;
+	          lib$rsvp$$internal$$reject(promise, reason);
+	        });
+	      } catch(e) {
+	        lib$rsvp$$internal$$reject(promise, e);
+	      }
+	    }
+
+	    function lib$rsvp$enumerator$$makeSettledResult(state, position, value) {
+	      if (state === lib$rsvp$$internal$$FULFILLED) {
+	        return {
+	          state: 'fulfilled',
+	          value: value
+	        };
+	      } else {
+	         return {
+	          state: 'rejected',
+	          reason: value
+	        };
+	      }
+	    }
+
+	    function lib$rsvp$enumerator$$Enumerator(Constructor, input, abortOnReject, label) {
+	      var enumerator = this;
+
+	      enumerator._instanceConstructor = Constructor;
+	      enumerator.promise = new Constructor(lib$rsvp$$internal$$noop, label);
+	      enumerator._abortOnReject = abortOnReject;
+
+	      if (enumerator._validateInput(input)) {
+	        enumerator._input     = input;
+	        enumerator.length     = input.length;
+	        enumerator._remaining = input.length;
+
+	        enumerator._init();
+
+	        if (enumerator.length === 0) {
+	          lib$rsvp$$internal$$fulfill(enumerator.promise, enumerator._result);
+	        } else {
+	          enumerator.length = enumerator.length || 0;
+	          enumerator._enumerate();
+	          if (enumerator._remaining === 0) {
+	            lib$rsvp$$internal$$fulfill(enumerator.promise, enumerator._result);
+	          }
+	        }
+	      } else {
+	        lib$rsvp$$internal$$reject(enumerator.promise, enumerator._validationError());
+	      }
+	    }
+
+	    var lib$rsvp$enumerator$$default = lib$rsvp$enumerator$$Enumerator;
+
+	    lib$rsvp$enumerator$$Enumerator.prototype._validateInput = function(input) {
+	      return lib$rsvp$utils$$isArray(input);
+	    };
+
+	    lib$rsvp$enumerator$$Enumerator.prototype._validationError = function() {
+	      return new Error('Array Methods must be provided an Array');
+	    };
+
+	    lib$rsvp$enumerator$$Enumerator.prototype._init = function() {
+	      this._result = new Array(this.length);
+	    };
+
+	    lib$rsvp$enumerator$$Enumerator.prototype._enumerate = function() {
+	      var enumerator = this;
+	      var length     = enumerator.length;
+	      var promise    = enumerator.promise;
+	      var input      = enumerator._input;
+
+	      for (var i = 0; promise._state === lib$rsvp$$internal$$PENDING && i < length; i++) {
+	        enumerator._eachEntry(input[i], i);
+	      }
+	    };
+
+	    lib$rsvp$enumerator$$Enumerator.prototype._eachEntry = function(entry, i) {
+	      var enumerator = this;
+	      var c = enumerator._instanceConstructor;
+	      if (lib$rsvp$utils$$isMaybeThenable(entry)) {
+	        if (entry.constructor === c && entry._state !== lib$rsvp$$internal$$PENDING) {
+	          entry._onError = null;
+	          enumerator._settledAt(entry._state, i, entry._result);
+	        } else {
+	          enumerator._willSettleAt(c.resolve(entry), i);
+	        }
+	      } else {
+	        enumerator._remaining--;
+	        enumerator._result[i] = enumerator._makeResult(lib$rsvp$$internal$$FULFILLED, i, entry);
+	      }
+	    };
+
+	    lib$rsvp$enumerator$$Enumerator.prototype._settledAt = function(state, i, value) {
+	      var enumerator = this;
+	      var promise = enumerator.promise;
+
+	      if (promise._state === lib$rsvp$$internal$$PENDING) {
+	        enumerator._remaining--;
+
+	        if (enumerator._abortOnReject && state === lib$rsvp$$internal$$REJECTED) {
+	          lib$rsvp$$internal$$reject(promise, value);
+	        } else {
+	          enumerator._result[i] = enumerator._makeResult(state, i, value);
+	        }
+	      }
+
+	      if (enumerator._remaining === 0) {
+	        lib$rsvp$$internal$$fulfill(promise, enumerator._result);
+	      }
+	    };
+
+	    lib$rsvp$enumerator$$Enumerator.prototype._makeResult = function(state, i, value) {
+	      return value;
+	    };
+
+	    lib$rsvp$enumerator$$Enumerator.prototype._willSettleAt = function(promise, i) {
+	      var enumerator = this;
+
+	      lib$rsvp$$internal$$subscribe(promise, undefined, function(value) {
+	        enumerator._settledAt(lib$rsvp$$internal$$FULFILLED, i, value);
+	      }, function(reason) {
+	        enumerator._settledAt(lib$rsvp$$internal$$REJECTED, i, reason);
+	      });
+	    };
+	    function lib$rsvp$promise$all$$all(entries, label) {
+	      return new lib$rsvp$enumerator$$default(this, entries, true /* abort on reject */, label).promise;
+	    }
+	    var lib$rsvp$promise$all$$default = lib$rsvp$promise$all$$all;
+	    function lib$rsvp$promise$race$$race(entries, label) {
+	      /*jshint validthis:true */
+	      var Constructor = this;
+
+	      var promise = new Constructor(lib$rsvp$$internal$$noop, label);
+
+	      if (!lib$rsvp$utils$$isArray(entries)) {
+	        lib$rsvp$$internal$$reject(promise, new TypeError('You must pass an array to race.'));
+	        return promise;
+	      }
+
+	      var length = entries.length;
+
+	      function onFulfillment(value) {
+	        lib$rsvp$$internal$$resolve(promise, value);
+	      }
+
+	      function onRejection(reason) {
+	        lib$rsvp$$internal$$reject(promise, reason);
+	      }
+
+	      for (var i = 0; promise._state === lib$rsvp$$internal$$PENDING && i < length; i++) {
+	        lib$rsvp$$internal$$subscribe(Constructor.resolve(entries[i]), undefined, onFulfillment, onRejection);
+	      }
+
+	      return promise;
+	    }
+	    var lib$rsvp$promise$race$$default = lib$rsvp$promise$race$$race;
+	    function lib$rsvp$promise$resolve$$resolve(object, label) {
+	      /*jshint validthis:true */
+	      var Constructor = this;
+
+	      if (object && typeof object === 'object' && object.constructor === Constructor) {
+	        return object;
+	      }
+
+	      var promise = new Constructor(lib$rsvp$$internal$$noop, label);
+	      lib$rsvp$$internal$$resolve(promise, object);
+	      return promise;
+	    }
+	    var lib$rsvp$promise$resolve$$default = lib$rsvp$promise$resolve$$resolve;
+	    function lib$rsvp$promise$reject$$reject(reason, label) {
+	      /*jshint validthis:true */
+	      var Constructor = this;
+	      var promise = new Constructor(lib$rsvp$$internal$$noop, label);
+	      lib$rsvp$$internal$$reject(promise, reason);
+	      return promise;
+	    }
+	    var lib$rsvp$promise$reject$$default = lib$rsvp$promise$reject$$reject;
+
+	    var lib$rsvp$promise$$guidKey = 'rsvp_' + lib$rsvp$utils$$now() + '-';
+	    var lib$rsvp$promise$$counter = 0;
+
+	    function lib$rsvp$promise$$needsResolver() {
+	      throw new TypeError('You must pass a resolver function as the first argument to the promise constructor');
+	    }
+
+	    function lib$rsvp$promise$$needsNew() {
+	      throw new TypeError("Failed to construct 'Promise': Please use the 'new' operator, this object constructor cannot be called as a function.");
+	    }
+
+	    function lib$rsvp$promise$$Promise(resolver, label) {
+	      var promise = this;
+
+	      promise._id = lib$rsvp$promise$$counter++;
+	      promise._label = label;
+	      promise._state = undefined;
+	      promise._result = undefined;
+	      promise._subscribers = [];
+
+	      if (lib$rsvp$config$$config.instrument) {
+	        lib$rsvp$instrument$$default('created', promise);
+	      }
+
+	      if (lib$rsvp$$internal$$noop !== resolver) {
+	        if (!lib$rsvp$utils$$isFunction(resolver)) {
+	          lib$rsvp$promise$$needsResolver();
+	        }
+
+	        if (!(promise instanceof lib$rsvp$promise$$Promise)) {
+	          lib$rsvp$promise$$needsNew();
+	        }
+
+	        lib$rsvp$$internal$$initializePromise(promise, resolver);
+	      }
+	    }
+
+	    var lib$rsvp$promise$$default = lib$rsvp$promise$$Promise;
+
+	    // deprecated
+	    lib$rsvp$promise$$Promise.cast = lib$rsvp$promise$resolve$$default;
+	    lib$rsvp$promise$$Promise.all = lib$rsvp$promise$all$$default;
+	    lib$rsvp$promise$$Promise.race = lib$rsvp$promise$race$$default;
+	    lib$rsvp$promise$$Promise.resolve = lib$rsvp$promise$resolve$$default;
+	    lib$rsvp$promise$$Promise.reject = lib$rsvp$promise$reject$$default;
+
+	    lib$rsvp$promise$$Promise.prototype = {
+	      constructor: lib$rsvp$promise$$Promise,
+
+	      _guidKey: lib$rsvp$promise$$guidKey,
+
+	      _onError: function (reason) {
+	        var promise = this;
+	        lib$rsvp$config$$config.after(function() {
+	          if (promise._onError) {
+	            lib$rsvp$config$$config['trigger']('error', reason, promise._label);
+	          }
+	        });
+	      },
+
+	    /**
+	      The primary way of interacting with a promise is through its `then` method,
+	      which registers callbacks to receive either a promise's eventual value or the
+	      reason why the promise cannot be fulfilled.
+
+	      ```js
+	      findUser().then(function(user){
+	        // user is available
+	      }, function(reason){
+	        // user is unavailable, and you are given the reason why
+	      });
+	      ```
+
+	      Chaining
+	      --------
+
+	      The return value of `then` is itself a promise.  This second, 'downstream'
+	      promise is resolved with the return value of the first promise's fulfillment
+	      or rejection handler, or rejected if the handler throws an exception.
+
+	      ```js
+	      findUser().then(function (user) {
+	        return user.name;
+	      }, function (reason) {
+	        return 'default name';
+	      }).then(function (userName) {
+	        // If `findUser` fulfilled, `userName` will be the user's name, otherwise it
+	        // will be `'default name'`
+	      });
+
+	      findUser().then(function (user) {
+	        throw new Error('Found user, but still unhappy');
+	      }, function (reason) {
+	        throw new Error('`findUser` rejected and we're unhappy');
+	      }).then(function (value) {
+	        // never reached
+	      }, function (reason) {
+	        // if `findUser` fulfilled, `reason` will be 'Found user, but still unhappy'.
+	        // If `findUser` rejected, `reason` will be '`findUser` rejected and we're unhappy'.
+	      });
+	      ```
+	      If the downstream promise does not specify a rejection handler, rejection reasons will be propagated further downstream.
+
+	      ```js
+	      findUser().then(function (user) {
+	        throw new PedagogicalException('Upstream error');
+	      }).then(function (value) {
+	        // never reached
+	      }).then(function (value) {
+	        // never reached
+	      }, function (reason) {
+	        // The `PedgagocialException` is propagated all the way down to here
+	      });
+	      ```
+
+	      Assimilation
+	      ------------
+
+	      Sometimes the value you want to propagate to a downstream promise can only be
+	      retrieved asynchronously. This can be achieved by returning a promise in the
+	      fulfillment or rejection handler. The downstream promise will then be pending
+	      until the returned promise is settled. This is called *assimilation*.
+
+	      ```js
+	      findUser().then(function (user) {
+	        return findCommentsByAuthor(user);
+	      }).then(function (comments) {
+	        // The user's comments are now available
+	      });
+	      ```
+
+	      If the assimliated promise rejects, then the downstream promise will also reject.
+
+	      ```js
+	      findUser().then(function (user) {
+	        return findCommentsByAuthor(user);
+	      }).then(function (comments) {
+	        // If `findCommentsByAuthor` fulfills, we'll have the value here
+	      }, function (reason) {
+	        // If `findCommentsByAuthor` rejects, we'll have the reason here
+	      });
+	      ```
+
+	      Simple Example
+	      --------------
+
+	      Synchronous Example
+
+	      ```javascript
+	      var result;
+
+	      try {
+	        result = findResult();
+	        // success
+	      } catch(reason) {
+	        // failure
+	      }
+	      ```
+
+	      Errback Example
+
+	      ```js
+	      findResult(function(result, err){
+	        if (err) {
+	          // failure
+	        } else {
+	          // success
+	        }
+	      });
+	      ```
+
+	      Promise Example;
+
+	      ```javascript
+	      findResult().then(function(result){
+	        // success
+	      }, function(reason){
+	        // failure
+	      });
+	      ```
+
+	      Advanced Example
+	      --------------
+
+	      Synchronous Example
+
+	      ```javascript
+	      var author, books;
+
+	      try {
+	        author = findAuthor();
+	        books  = findBooksByAuthor(author);
+	        // success
+	      } catch(reason) {
+	        // failure
+	      }
+	      ```
+
+	      Errback Example
+
+	      ```js
+
+	      function foundBooks(books) {
+
+	      }
+
+	      function failure(reason) {
+
+	      }
+
+	      findAuthor(function(author, err){
+	        if (err) {
+	          failure(err);
+	          // failure
+	        } else {
+	          try {
+	            findBoooksByAuthor(author, function(books, err) {
+	              if (err) {
+	                failure(err);
+	              } else {
+	                try {
+	                  foundBooks(books);
+	                } catch(reason) {
+	                  failure(reason);
+	                }
+	              }
+	            });
+	          } catch(error) {
+	            failure(err);
+	          }
+	          // success
+	        }
+	      });
+	      ```
+
+	      Promise Example;
+
+	      ```javascript
+	      findAuthor().
+	        then(findBooksByAuthor).
+	        then(function(books){
+	          // found books
+	      }).catch(function(reason){
+	        // something went wrong
+	      });
+	      ```
+
+	      @method then
+	      @param {Function} onFulfillment
+	      @param {Function} onRejection
+	      @param {String} label optional string for labeling the promise.
+	      Useful for tooling.
+	      @return {Promise}
+	    */
+	      then: function(onFulfillment, onRejection, label) {
+	        var parent = this;
+	        var state = parent._state;
+
+	        if (state === lib$rsvp$$internal$$FULFILLED && !onFulfillment || state === lib$rsvp$$internal$$REJECTED && !onRejection) {
+	          if (lib$rsvp$config$$config.instrument) {
+	            lib$rsvp$instrument$$default('chained', parent, parent);
+	          }
+	          return parent;
+	        }
+
+	        parent._onError = null;
+
+	        var child = new parent.constructor(lib$rsvp$$internal$$noop, label);
+	        var result = parent._result;
+
+	        if (lib$rsvp$config$$config.instrument) {
+	          lib$rsvp$instrument$$default('chained', parent, child);
+	        }
+
+	        if (state) {
+	          var callback = arguments[state - 1];
+	          lib$rsvp$config$$config.async(function(){
+	            lib$rsvp$$internal$$invokeCallback(state, child, callback, result);
+	          });
+	        } else {
+	          lib$rsvp$$internal$$subscribe(parent, child, onFulfillment, onRejection);
+	        }
+
+	        return child;
+	      },
+
+	    /**
+	      `catch` is simply sugar for `then(undefined, onRejection)` which makes it the same
+	      as the catch block of a try/catch statement.
+
+	      ```js
+	      function findAuthor(){
+	        throw new Error('couldn't find that author');
+	      }
+
+	      // synchronous
+	      try {
+	        findAuthor();
+	      } catch(reason) {
+	        // something went wrong
+	      }
+
+	      // async with promises
+	      findAuthor().catch(function(reason){
+	        // something went wrong
+	      });
+	      ```
+
+	      @method catch
+	      @param {Function} onRejection
+	      @param {String} label optional string for labeling the promise.
+	      Useful for tooling.
+	      @return {Promise}
+	    */
+	      'catch': function(onRejection, label) {
+	        return this.then(undefined, onRejection, label);
+	      },
+
+	    /**
+	      `finally` will be invoked regardless of the promise's fate just as native
+	      try/catch/finally behaves
+
+	      Synchronous example:
+
+	      ```js
+	      findAuthor() {
+	        if (Math.random() > 0.5) {
+	          throw new Error();
+	        }
+	        return new Author();
+	      }
+
+	      try {
+	        return findAuthor(); // succeed or fail
+	      } catch(error) {
+	        return findOtherAuther();
+	      } finally {
+	        // always runs
+	        // doesn't affect the return value
+	      }
+	      ```
+
+	      Asynchronous example:
+
+	      ```js
+	      findAuthor().catch(function(reason){
+	        return findOtherAuther();
+	      }).finally(function(){
+	        // author was either found, or not
+	      });
+	      ```
+
+	      @method finally
+	      @param {Function} callback
+	      @param {String} label optional string for labeling the promise.
+	      Useful for tooling.
+	      @return {Promise}
+	    */
+	      'finally': function(callback, label) {
+	        var promise = this;
+	        var constructor = promise.constructor;
+
+	        return promise.then(function(value) {
+	          return constructor.resolve(callback()).then(function(){
+	            return value;
+	          });
+	        }, function(reason) {
+	          return constructor.resolve(callback()).then(function(){
+	            throw reason;
+	          });
+	        }, label);
+	      }
+	    };
+
+	    function lib$rsvp$all$settled$$AllSettled(Constructor, entries, label) {
+	      this._superConstructor(Constructor, entries, false /* don't abort on reject */, label);
+	    }
+
+	    lib$rsvp$all$settled$$AllSettled.prototype = lib$rsvp$utils$$o_create(lib$rsvp$enumerator$$default.prototype);
+	    lib$rsvp$all$settled$$AllSettled.prototype._superConstructor = lib$rsvp$enumerator$$default;
+	    lib$rsvp$all$settled$$AllSettled.prototype._makeResult = lib$rsvp$enumerator$$makeSettledResult;
+	    lib$rsvp$all$settled$$AllSettled.prototype._validationError = function() {
+	      return new Error('allSettled must be called with an array');
+	    };
+
+	    function lib$rsvp$all$settled$$allSettled(entries, label) {
+	      return new lib$rsvp$all$settled$$AllSettled(lib$rsvp$promise$$default, entries, label).promise;
+	    }
+	    var lib$rsvp$all$settled$$default = lib$rsvp$all$settled$$allSettled;
+	    function lib$rsvp$all$$all(array, label) {
+	      return lib$rsvp$promise$$default.all(array, label);
+	    }
+	    var lib$rsvp$all$$default = lib$rsvp$all$$all;
+	    var lib$rsvp$asap$$len = 0;
+	    var lib$rsvp$asap$$toString = {}.toString;
+	    var lib$rsvp$asap$$vertxNext;
+	    function lib$rsvp$asap$$asap(callback, arg) {
+	      lib$rsvp$asap$$queue[lib$rsvp$asap$$len] = callback;
+	      lib$rsvp$asap$$queue[lib$rsvp$asap$$len + 1] = arg;
+	      lib$rsvp$asap$$len += 2;
+	      if (lib$rsvp$asap$$len === 2) {
+	        // If len is 1, that means that we need to schedule an async flush.
+	        // If additional callbacks are queued before the queue is flushed, they
+	        // will be processed by this flush that we are scheduling.
+	        lib$rsvp$asap$$scheduleFlush();
+	      }
+	    }
+
+	    var lib$rsvp$asap$$default = lib$rsvp$asap$$asap;
+
+	    var lib$rsvp$asap$$browserWindow = (typeof window !== 'undefined') ? window : undefined;
+	    var lib$rsvp$asap$$browserGlobal = lib$rsvp$asap$$browserWindow || {};
+	    var lib$rsvp$asap$$BrowserMutationObserver = lib$rsvp$asap$$browserGlobal.MutationObserver || lib$rsvp$asap$$browserGlobal.WebKitMutationObserver;
+	    var lib$rsvp$asap$$isNode = typeof self === 'undefined' &&
+	      typeof process !== 'undefined' && {}.toString.call(process) === '[object process]';
+
+	    // test for web worker but not in IE10
+	    var lib$rsvp$asap$$isWorker = typeof Uint8ClampedArray !== 'undefined' &&
+	      typeof importScripts !== 'undefined' &&
+	      typeof MessageChannel !== 'undefined';
+
+	    // node
+	    function lib$rsvp$asap$$useNextTick() {
+	      var nextTick = process.nextTick;
+	      // node version 0.10.x displays a deprecation warning when nextTick is used recursively
+	      // setImmediate should be used instead instead
+	      var version = process.versions.node.match(/^(?:(\d+)\.)?(?:(\d+)\.)?(\*|\d+)$/);
+	      if (Array.isArray(version) && version[1] === '0' && version[2] === '10') {
+	        nextTick = setImmediate;
+	      }
+	      return function() {
+	        nextTick(lib$rsvp$asap$$flush);
+	      };
+	    }
+
+	    // vertx
+	    function lib$rsvp$asap$$useVertxTimer() {
+	      return function() {
+	        lib$rsvp$asap$$vertxNext(lib$rsvp$asap$$flush);
+	      };
+	    }
+
+	    function lib$rsvp$asap$$useMutationObserver() {
+	      var iterations = 0;
+	      var observer = new lib$rsvp$asap$$BrowserMutationObserver(lib$rsvp$asap$$flush);
+	      var node = document.createTextNode('');
+	      observer.observe(node, { characterData: true });
+
+	      return function() {
+	        node.data = (iterations = ++iterations % 2);
+	      };
+	    }
+
+	    // web worker
+	    function lib$rsvp$asap$$useMessageChannel() {
+	      var channel = new MessageChannel();
+	      channel.port1.onmessage = lib$rsvp$asap$$flush;
+	      return function () {
+	        channel.port2.postMessage(0);
+	      };
+	    }
+
+	    function lib$rsvp$asap$$useSetTimeout() {
+	      return function() {
+	        setTimeout(lib$rsvp$asap$$flush, 1);
+	      };
+	    }
+
+	    var lib$rsvp$asap$$queue = new Array(1000);
+	    function lib$rsvp$asap$$flush() {
+	      for (var i = 0; i < lib$rsvp$asap$$len; i+=2) {
+	        var callback = lib$rsvp$asap$$queue[i];
+	        var arg = lib$rsvp$asap$$queue[i+1];
+
+	        callback(arg);
+
+	        lib$rsvp$asap$$queue[i] = undefined;
+	        lib$rsvp$asap$$queue[i+1] = undefined;
+	      }
+
+	      lib$rsvp$asap$$len = 0;
+	    }
+
+	    function lib$rsvp$asap$$attemptVertex() {
+	      try {
+	        var r = require;
+	        var vertx = __webpack_require__(10);
+	        lib$rsvp$asap$$vertxNext = vertx.runOnLoop || vertx.runOnContext;
+	        return lib$rsvp$asap$$useVertxTimer();
+	      } catch(e) {
+	        return lib$rsvp$asap$$useSetTimeout();
+	      }
+	    }
+
+	    var lib$rsvp$asap$$scheduleFlush;
+	    // Decide what async method to use to triggering processing of queued callbacks:
+	    if (lib$rsvp$asap$$isNode) {
+	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useNextTick();
+	    } else if (lib$rsvp$asap$$BrowserMutationObserver) {
+	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useMutationObserver();
+	    } else if (lib$rsvp$asap$$isWorker) {
+	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useMessageChannel();
+	    } else if (lib$rsvp$asap$$browserWindow === undefined && "function" === 'function') {
+	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$attemptVertex();
+	    } else {
+	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useSetTimeout();
+	    }
+	    function lib$rsvp$defer$$defer(label) {
+	      var deferred = {};
+
+	      deferred['promise'] = new lib$rsvp$promise$$default(function(resolve, reject) {
+	        deferred['resolve'] = resolve;
+	        deferred['reject'] = reject;
+	      }, label);
+
+	      return deferred;
+	    }
+	    var lib$rsvp$defer$$default = lib$rsvp$defer$$defer;
+	    function lib$rsvp$filter$$filter(promises, filterFn, label) {
+	      return lib$rsvp$promise$$default.all(promises, label).then(function(values) {
+	        if (!lib$rsvp$utils$$isFunction(filterFn)) {
+	          throw new TypeError("You must pass a function as filter's second argument.");
+	        }
+
+	        var length = values.length;
+	        var filtered = new Array(length);
+
+	        for (var i = 0; i < length; i++) {
+	          filtered[i] = filterFn(values[i]);
+	        }
+
+	        return lib$rsvp$promise$$default.all(filtered, label).then(function(filtered) {
+	          var results = new Array(length);
+	          var newLength = 0;
+
+	          for (var i = 0; i < length; i++) {
+	            if (filtered[i]) {
+	              results[newLength] = values[i];
+	              newLength++;
+	            }
+	          }
+
+	          results.length = newLength;
+
+	          return results;
+	        });
+	      });
+	    }
+	    var lib$rsvp$filter$$default = lib$rsvp$filter$$filter;
+
+	    function lib$rsvp$promise$hash$$PromiseHash(Constructor, object, label) {
+	      this._superConstructor(Constructor, object, true, label);
+	    }
+
+	    var lib$rsvp$promise$hash$$default = lib$rsvp$promise$hash$$PromiseHash;
+
+	    lib$rsvp$promise$hash$$PromiseHash.prototype = lib$rsvp$utils$$o_create(lib$rsvp$enumerator$$default.prototype);
+	    lib$rsvp$promise$hash$$PromiseHash.prototype._superConstructor = lib$rsvp$enumerator$$default;
+	    lib$rsvp$promise$hash$$PromiseHash.prototype._init = function() {
+	      this._result = {};
+	    };
+
+	    lib$rsvp$promise$hash$$PromiseHash.prototype._validateInput = function(input) {
+	      return input && typeof input === 'object';
+	    };
+
+	    lib$rsvp$promise$hash$$PromiseHash.prototype._validationError = function() {
+	      return new Error('Promise.hash must be called with an object');
+	    };
+
+	    lib$rsvp$promise$hash$$PromiseHash.prototype._enumerate = function() {
+	      var enumerator = this;
+	      var promise    = enumerator.promise;
+	      var input      = enumerator._input;
+	      var results    = [];
+
+	      for (var key in input) {
+	        if (promise._state === lib$rsvp$$internal$$PENDING && Object.prototype.hasOwnProperty.call(input, key)) {
+	          results.push({
+	            position: key,
+	            entry: input[key]
+	          });
+	        }
+	      }
+
+	      var length = results.length;
+	      enumerator._remaining = length;
+	      var result;
+
+	      for (var i = 0; promise._state === lib$rsvp$$internal$$PENDING && i < length; i++) {
+	        result = results[i];
+	        enumerator._eachEntry(result.entry, result.position);
+	      }
+	    };
+
+	    function lib$rsvp$hash$settled$$HashSettled(Constructor, object, label) {
+	      this._superConstructor(Constructor, object, false, label);
+	    }
+
+	    lib$rsvp$hash$settled$$HashSettled.prototype = lib$rsvp$utils$$o_create(lib$rsvp$promise$hash$$default.prototype);
+	    lib$rsvp$hash$settled$$HashSettled.prototype._superConstructor = lib$rsvp$enumerator$$default;
+	    lib$rsvp$hash$settled$$HashSettled.prototype._makeResult = lib$rsvp$enumerator$$makeSettledResult;
+
+	    lib$rsvp$hash$settled$$HashSettled.prototype._validationError = function() {
+	      return new Error('hashSettled must be called with an object');
+	    };
+
+	    function lib$rsvp$hash$settled$$hashSettled(object, label) {
+	      return new lib$rsvp$hash$settled$$HashSettled(lib$rsvp$promise$$default, object, label).promise;
+	    }
+	    var lib$rsvp$hash$settled$$default = lib$rsvp$hash$settled$$hashSettled;
+	    function lib$rsvp$hash$$hash(object, label) {
+	      return new lib$rsvp$promise$hash$$default(lib$rsvp$promise$$default, object, label).promise;
+	    }
+	    var lib$rsvp$hash$$default = lib$rsvp$hash$$hash;
+	    function lib$rsvp$map$$map(promises, mapFn, label) {
+	      return lib$rsvp$promise$$default.all(promises, label).then(function(values) {
+	        if (!lib$rsvp$utils$$isFunction(mapFn)) {
+	          throw new TypeError("You must pass a function as map's second argument.");
+	        }
+
+	        var length = values.length;
+	        var results = new Array(length);
+
+	        for (var i = 0; i < length; i++) {
+	          results[i] = mapFn(values[i]);
+	        }
+
+	        return lib$rsvp$promise$$default.all(results, label);
+	      });
+	    }
+	    var lib$rsvp$map$$default = lib$rsvp$map$$map;
+
+	    function lib$rsvp$node$$Result() {
+	      this.value = undefined;
+	    }
+
+	    var lib$rsvp$node$$ERROR = new lib$rsvp$node$$Result();
+	    var lib$rsvp$node$$GET_THEN_ERROR = new lib$rsvp$node$$Result();
+
+	    function lib$rsvp$node$$getThen(obj) {
+	      try {
+	       return obj.then;
+	      } catch(error) {
+	        lib$rsvp$node$$ERROR.value= error;
+	        return lib$rsvp$node$$ERROR;
+	      }
+	    }
+
+
+	    function lib$rsvp$node$$tryApply(f, s, a) {
+	      try {
+	        f.apply(s, a);
+	      } catch(error) {
+	        lib$rsvp$node$$ERROR.value = error;
+	        return lib$rsvp$node$$ERROR;
+	      }
+	    }
+
+	    function lib$rsvp$node$$makeObject(_, argumentNames) {
+	      var obj = {};
+	      var name;
+	      var i;
+	      var length = _.length;
+	      var args = new Array(length);
+
+	      for (var x = 0; x < length; x++) {
+	        args[x] = _[x];
+	      }
+
+	      for (i = 0; i < argumentNames.length; i++) {
+	        name = argumentNames[i];
+	        obj[name] = args[i + 1];
+	      }
+
+	      return obj;
+	    }
+
+	    function lib$rsvp$node$$arrayResult(_) {
+	      var length = _.length;
+	      var args = new Array(length - 1);
+
+	      for (var i = 1; i < length; i++) {
+	        args[i - 1] = _[i];
+	      }
+
+	      return args;
+	    }
+
+	    function lib$rsvp$node$$wrapThenable(then, promise) {
+	      return {
+	        then: function(onFulFillment, onRejection) {
+	          return then.call(promise, onFulFillment, onRejection);
+	        }
+	      };
+	    }
+
+	    function lib$rsvp$node$$denodeify(nodeFunc, options) {
+	      var fn = function() {
+	        var self = this;
+	        var l = arguments.length;
+	        var args = new Array(l + 1);
+	        var arg;
+	        var promiseInput = false;
+
+	        for (var i = 0; i < l; ++i) {
+	          arg = arguments[i];
+
+	          if (!promiseInput) {
+	            // TODO: clean this up
+	            promiseInput = lib$rsvp$node$$needsPromiseInput(arg);
+	            if (promiseInput === lib$rsvp$node$$GET_THEN_ERROR) {
+	              var p = new lib$rsvp$promise$$default(lib$rsvp$$internal$$noop);
+	              lib$rsvp$$internal$$reject(p, lib$rsvp$node$$GET_THEN_ERROR.value);
+	              return p;
+	            } else if (promiseInput && promiseInput !== true) {
+	              arg = lib$rsvp$node$$wrapThenable(promiseInput, arg);
+	            }
+	          }
+	          args[i] = arg;
+	        }
+
+	        var promise = new lib$rsvp$promise$$default(lib$rsvp$$internal$$noop);
+
+	        args[l] = function(err, val) {
+	          if (err)
+	            lib$rsvp$$internal$$reject(promise, err);
+	          else if (options === undefined)
+	            lib$rsvp$$internal$$resolve(promise, val);
+	          else if (options === true)
+	            lib$rsvp$$internal$$resolve(promise, lib$rsvp$node$$arrayResult(arguments));
+	          else if (lib$rsvp$utils$$isArray(options))
+	            lib$rsvp$$internal$$resolve(promise, lib$rsvp$node$$makeObject(arguments, options));
+	          else
+	            lib$rsvp$$internal$$resolve(promise, val);
+	        };
+
+	        if (promiseInput) {
+	          return lib$rsvp$node$$handlePromiseInput(promise, args, nodeFunc, self);
+	        } else {
+	          return lib$rsvp$node$$handleValueInput(promise, args, nodeFunc, self);
+	        }
+	      };
+
+	      fn.__proto__ = nodeFunc;
+
+	      return fn;
+	    }
+
+	    var lib$rsvp$node$$default = lib$rsvp$node$$denodeify;
+
+	    function lib$rsvp$node$$handleValueInput(promise, args, nodeFunc, self) {
+	      var result = lib$rsvp$node$$tryApply(nodeFunc, self, args);
+	      if (result === lib$rsvp$node$$ERROR) {
+	        lib$rsvp$$internal$$reject(promise, result.value);
+	      }
+	      return promise;
+	    }
+
+	    function lib$rsvp$node$$handlePromiseInput(promise, args, nodeFunc, self){
+	      return lib$rsvp$promise$$default.all(args).then(function(args){
+	        var result = lib$rsvp$node$$tryApply(nodeFunc, self, args);
+	        if (result === lib$rsvp$node$$ERROR) {
+	          lib$rsvp$$internal$$reject(promise, result.value);
+	        }
+	        return promise;
+	      });
+	    }
+
+	    function lib$rsvp$node$$needsPromiseInput(arg) {
+	      if (arg && typeof arg === 'object') {
+	        if (arg.constructor === lib$rsvp$promise$$default) {
+	          return true;
+	        } else {
+	          return lib$rsvp$node$$getThen(arg);
+	        }
+	      } else {
+	        return false;
+	      }
+	    }
+	    var lib$rsvp$platform$$platform;
+
+	    /* global self */
+	    if (typeof self === 'object') {
+	      lib$rsvp$platform$$platform = self;
+
+	    /* global global */
+	    } else if (typeof global === 'object') {
+	      lib$rsvp$platform$$platform = global;
+	    } else {
+	      throw new Error('no global: `self` or `global` found');
+	    }
+
+	    var lib$rsvp$platform$$default = lib$rsvp$platform$$platform;
+	    function lib$rsvp$race$$race(array, label) {
+	      return lib$rsvp$promise$$default.race(array, label);
+	    }
+	    var lib$rsvp$race$$default = lib$rsvp$race$$race;
+	    function lib$rsvp$reject$$reject(reason, label) {
+	      return lib$rsvp$promise$$default.reject(reason, label);
+	    }
+	    var lib$rsvp$reject$$default = lib$rsvp$reject$$reject;
+	    function lib$rsvp$resolve$$resolve(value, label) {
+	      return lib$rsvp$promise$$default.resolve(value, label);
+	    }
+	    var lib$rsvp$resolve$$default = lib$rsvp$resolve$$resolve;
+	    function lib$rsvp$rethrow$$rethrow(reason) {
+	      setTimeout(function() {
+	        throw reason;
+	      });
+	      throw reason;
+	    }
+	    var lib$rsvp$rethrow$$default = lib$rsvp$rethrow$$rethrow;
+
+	    // defaults
+	    lib$rsvp$config$$config.async = lib$rsvp$asap$$default;
+	    lib$rsvp$config$$config.after = function(cb) {
+	      setTimeout(cb, 0);
+	    };
+	    var lib$rsvp$$cast = lib$rsvp$resolve$$default;
+	    function lib$rsvp$$async(callback, arg) {
+	      lib$rsvp$config$$config.async(callback, arg);
+	    }
+
+	    function lib$rsvp$$on() {
+	      lib$rsvp$config$$config['on'].apply(lib$rsvp$config$$config, arguments);
+	    }
+
+	    function lib$rsvp$$off() {
+	      lib$rsvp$config$$config['off'].apply(lib$rsvp$config$$config, arguments);
+	    }
+
+	    // Set up instrumentation through `window.__PROMISE_INTRUMENTATION__`
+	    if (typeof window !== 'undefined' && typeof window['__PROMISE_INSTRUMENTATION__'] === 'object') {
+	      var lib$rsvp$$callbacks = window['__PROMISE_INSTRUMENTATION__'];
+	      lib$rsvp$config$$configure('instrument', true);
+	      for (var lib$rsvp$$eventName in lib$rsvp$$callbacks) {
+	        if (lib$rsvp$$callbacks.hasOwnProperty(lib$rsvp$$eventName)) {
+	          lib$rsvp$$on(lib$rsvp$$eventName, lib$rsvp$$callbacks[lib$rsvp$$eventName]);
+	        }
+	      }
+	    }
+
+	    var lib$rsvp$umd$$RSVP = {
+	      'race': lib$rsvp$race$$default,
+	      'Promise': lib$rsvp$promise$$default,
+	      'allSettled': lib$rsvp$all$settled$$default,
+	      'hash': lib$rsvp$hash$$default,
+	      'hashSettled': lib$rsvp$hash$settled$$default,
+	      'denodeify': lib$rsvp$node$$default,
+	      'on': lib$rsvp$$on,
+	      'off': lib$rsvp$$off,
+	      'map': lib$rsvp$map$$default,
+	      'filter': lib$rsvp$filter$$default,
+	      'resolve': lib$rsvp$resolve$$default,
+	      'reject': lib$rsvp$reject$$default,
+	      'all': lib$rsvp$all$$default,
+	      'rethrow': lib$rsvp$rethrow$$default,
+	      'defer': lib$rsvp$defer$$default,
+	      'EventTarget': lib$rsvp$events$$default,
+	      'configure': lib$rsvp$config$$configure,
+	      'async': lib$rsvp$$async
+	    };
+
+	    /* global define:true module:true window: true */
+	    if ("function" === 'function' && __webpack_require__(11)['amd']) {
+	      !(__WEBPACK_AMD_DEFINE_RESULT__ = function() { return lib$rsvp$umd$$RSVP; }.call(exports, __webpack_require__, exports, module), __WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
+	    } else if (typeof module !== 'undefined' && module['exports']) {
+	      module['exports'] = lib$rsvp$umd$$RSVP;
+	    } else if (typeof lib$rsvp$platform$$default !== 'undefined') {
+	      lib$rsvp$platform$$default['RSVP'] = lib$rsvp$umd$$RSVP;
+	    }
+	}).call(this);
+
+	
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(14), (function() { return this; }()), __webpack_require__(12)(module)))
+
+/***/ },
+/* 7 */
+/***/ function(module, exports, __webpack_require__) {
+
+	"use strict";
+
+	function capitalize(str) {
+	  return str.charAt(0).toUpperCase() + str.slice(1);
+	};
+
+	module.exports = {
+	  capitalize: capitalize
+	};
+
+/***/ },
+/* 8 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(Buffer) {function lamejs() {
@@ -15687,5814 +21824,132 @@ return /******/ (function(modules) { // webpackBootstrap
 	}
 	//fs=require('fs');
 	//lamejs();
-	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(6).Buffer))
+	module.exports = lamejs;
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(13).Buffer))
 
 /***/ },
-/* 2 */
+/* 9 */
 /***/ function(module, exports, __webpack_require__) {
-
-	/*
-	 *  Copyright (c) 2014 The WebRTC project authors. All Rights Reserved.
-	 *
-	 *  Use of this source code is governed by a BSD-style license
-	 *  that can be found in the LICENSE file in the root of the source
-	 *  tree.
-	 */
-
-	/* More information about these options at jshint.com/docs/options */
-	/* jshint browser: true, camelcase: true, curly: true, devel: true,
-	   eqeqeq: true, forin: false, globalstrict: true, node: true,
-	   quotmark: single, undef: true, unused: strict */
-	/* global mozRTCIceCandidate, mozRTCPeerConnection, Promise,
-	mozRTCSessionDescription, webkitRTCPeerConnection, MediaStreamTrack */
-	/* exported trace,requestUserMedia */
 
 	'use strict';
 
-	var getUserMedia = null;
-	var attachMediaStream = null;
-	var reattachMediaStream = null;
-	var webrtcDetectedBrowser = null;
-	var webrtcDetectedVersion = null;
-	var webrtcMinimumVersion = null;
-	var webrtcUtils = {
-	  log: function() {
-	    // suppress console.log output when being included as a module.
-	    if (true) {
-	      return;
-	    }
-	    console.log.apply(console, arguments);
-	  },
-	  extractVersion: function(uastring, expr, pos) {
-	    var match = uastring.match(expr);
-	    return match && match.length >= pos && parseInt(match[pos]);
-	  }
+	var hasOwn = Object.prototype.hasOwnProperty;
+	var toStr = Object.prototype.toString;
+
+	var isArray = function isArray(arr) {
+		if (typeof Array.isArray === 'function') {
+			return Array.isArray(arr);
+		}
+
+		return toStr.call(arr) === '[object Array]';
 	};
 
-	function trace(text) {
-	  // This function is used for logging.
-	  if (text[text.length - 1] === '\n') {
-	    text = text.substring(0, text.length - 1);
-	  }
-	  if (window.performance) {
-	    var now = (window.performance.now() / 1000).toFixed(3);
-	    webrtcUtils.log(now + ': ' + text);
-	  } else {
-	    webrtcUtils.log(text);
-	  }
-	}
+	var isPlainObject = function isPlainObject(obj) {
+		if (!obj || toStr.call(obj) !== '[object Object]') {
+			return false;
+		}
 
-	if (typeof window === 'object') {
-	  if (window.HTMLMediaElement &&
-	    !('srcObject' in window.HTMLMediaElement.prototype)) {
-	    // Shim the srcObject property, once, when HTMLMediaElement is found.
-	    Object.defineProperty(window.HTMLMediaElement.prototype, 'srcObject', {
-	      get: function() {
-	        // If prefixed srcObject property exists, return it.
-	        // Otherwise use the shimmed property, _srcObject
-	        return 'mozSrcObject' in this ? this.mozSrcObject : this._srcObject;
-	      },
-	      set: function(stream) {
-	        if ('mozSrcObject' in this) {
-	          this.mozSrcObject = stream;
-	        } else {
-	          // Use _srcObject as a private property for this shim
-	          this._srcObject = stream;
-	          // TODO: revokeObjectUrl(this.src) when !stream to release resources?
-	          this.src = URL.createObjectURL(stream);
-	        }
-	      }
-	    });
-	  }
-	  // Proxy existing globals
-	  getUserMedia = window.navigator && window.navigator.getUserMedia;
-	}
+		var hasOwnConstructor = hasOwn.call(obj, 'constructor');
+		var hasIsPrototypeOf = obj.constructor && obj.constructor.prototype && hasOwn.call(obj.constructor.prototype, 'isPrototypeOf');
+		// Not own constructor property must be Object
+		if (obj.constructor && !hasOwnConstructor && !hasIsPrototypeOf) {
+			return false;
+		}
 
-	// Attach a media stream to an element.
-	attachMediaStream = function(element, stream) {
-	  element.srcObject = stream;
+		// Own properties are enumerated firstly, so to speed up,
+		// if last one is own, then all properties are own.
+		var key;
+		for (key in obj) {/**/}
+
+		return typeof key === 'undefined' || hasOwn.call(obj, key);
 	};
 
-	reattachMediaStream = function(to, from) {
-	  to.srcObject = from.srcObject;
+	module.exports = function extend() {
+		var options, name, src, copy, copyIsArray, clone,
+			target = arguments[0],
+			i = 1,
+			length = arguments.length,
+			deep = false;
+
+		// Handle a deep copy situation
+		if (typeof target === 'boolean') {
+			deep = target;
+			target = arguments[1] || {};
+			// skip the boolean and the target
+			i = 2;
+		} else if ((typeof target !== 'object' && typeof target !== 'function') || target == null) {
+			target = {};
+		}
+
+		for (; i < length; ++i) {
+			options = arguments[i];
+			// Only deal with non-null/undefined values
+			if (options != null) {
+				// Extend the base object
+				for (name in options) {
+					src = target[name];
+					copy = options[name];
+
+					// Prevent never-ending loop
+					if (target !== copy) {
+						// Recurse if we're merging plain objects or arrays
+						if (deep && copy && (isPlainObject(copy) || (copyIsArray = isArray(copy)))) {
+							if (copyIsArray) {
+								copyIsArray = false;
+								clone = src && isArray(src) ? src : [];
+							} else {
+								clone = src && isPlainObject(src) ? src : {};
+							}
+
+							// Never move original objects, clone them
+							target[name] = extend(deep, clone, copy);
+
+						// Don't bring in undefined values
+						} else if (typeof copy !== 'undefined') {
+							target[name] = copy;
+						}
+					}
+				}
+			}
+		}
+
+		// Return the modified object
+		return target;
 	};
 
-	if (typeof window === 'undefined' || !window.navigator) {
-	  webrtcUtils.log('This does not appear to be a browser');
-	  webrtcDetectedBrowser = 'not a browser';
-	} else if (navigator.mozGetUserMedia && window.mozRTCPeerConnection) {
-	  webrtcUtils.log('This appears to be Firefox');
-
-	  webrtcDetectedBrowser = 'firefox';
-
-	  // the detected firefox version.
-	  webrtcDetectedVersion = webrtcUtils.extractVersion(navigator.userAgent,
-	      /Firefox\/([0-9]+)\./, 1);
-
-	  // the minimum firefox version still supported by adapter.
-	  webrtcMinimumVersion = 31;
-
-	  // The RTCPeerConnection object.
-	  window.RTCPeerConnection = function(pcConfig, pcConstraints) {
-	    if (webrtcDetectedVersion < 38) {
-	      // .urls is not supported in FF < 38.
-	      // create RTCIceServers with a single url.
-	      if (pcConfig && pcConfig.iceServers) {
-	        var newIceServers = [];
-	        for (var i = 0; i < pcConfig.iceServers.length; i++) {
-	          var server = pcConfig.iceServers[i];
-	          if (server.hasOwnProperty('urls')) {
-	            for (var j = 0; j < server.urls.length; j++) {
-	              var newServer = {
-	                url: server.urls[j]
-	              };
-	              if (server.urls[j].indexOf('turn') === 0) {
-	                newServer.username = server.username;
-	                newServer.credential = server.credential;
-	              }
-	              newIceServers.push(newServer);
-	            }
-	          } else {
-	            newIceServers.push(pcConfig.iceServers[i]);
-	          }
-	        }
-	        pcConfig.iceServers = newIceServers;
-	      }
-	    }
-	    return new mozRTCPeerConnection(pcConfig, pcConstraints); // jscs:ignore requireCapitalizedConstructors
-	  };
-
-	  // The RTCSessionDescription object.
-	  if (!window.RTCSessionDescription) {
-	    window.RTCSessionDescription = mozRTCSessionDescription;
-	  }
-
-	  // The RTCIceCandidate object.
-	  if (!window.RTCIceCandidate) {
-	    window.RTCIceCandidate = mozRTCIceCandidate;
-	  }
-
-	  // getUserMedia constraints shim.
-	  getUserMedia = function(constraints, onSuccess, onError) {
-	    var constraintsToFF37 = function(c) {
-	      if (typeof c !== 'object' || c.require) {
-	        return c;
-	      }
-	      var require = [];
-	      Object.keys(c).forEach(function(key) {
-	        if (key === 'require' || key === 'advanced' || key === 'mediaSource') {
-	          return;
-	        }
-	        var r = c[key] = (typeof c[key] === 'object') ?
-	            c[key] : {ideal: c[key]};
-	        if (r.min !== undefined ||
-	            r.max !== undefined || r.exact !== undefined) {
-	          require.push(key);
-	        }
-	        if (r.exact !== undefined) {
-	          if (typeof r.exact === 'number') {
-	            r.min = r.max = r.exact;
-	          } else {
-	            c[key] = r.exact;
-	          }
-	          delete r.exact;
-	        }
-	        if (r.ideal !== undefined) {
-	          c.advanced = c.advanced || [];
-	          var oc = {};
-	          if (typeof r.ideal === 'number') {
-	            oc[key] = {min: r.ideal, max: r.ideal};
-	          } else {
-	            oc[key] = r.ideal;
-	          }
-	          c.advanced.push(oc);
-	          delete r.ideal;
-	          if (!Object.keys(r).length) {
-	            delete c[key];
-	          }
-	        }
-	      });
-	      if (require.length) {
-	        c.require = require;
-	      }
-	      return c;
-	    };
-	    if (webrtcDetectedVersion < 38) {
-	      webrtcUtils.log('spec: ' + JSON.stringify(constraints));
-	      if (constraints.audio) {
-	        constraints.audio = constraintsToFF37(constraints.audio);
-	      }
-	      if (constraints.video) {
-	        constraints.video = constraintsToFF37(constraints.video);
-	      }
-	      webrtcUtils.log('ff37: ' + JSON.stringify(constraints));
-	    }
-	    return navigator.mozGetUserMedia(constraints, onSuccess, onError);
-	  };
-
-	  navigator.getUserMedia = getUserMedia;
-
-	  // Shim for mediaDevices on older versions.
-	  if (!navigator.mediaDevices) {
-	    navigator.mediaDevices = {getUserMedia: requestUserMedia,
-	      addEventListener: function() { },
-	      removeEventListener: function() { }
-	    };
-	  }
-	  navigator.mediaDevices.enumerateDevices =
-	      navigator.mediaDevices.enumerateDevices || function() {
-	    return new Promise(function(resolve) {
-	      var infos = [
-	        {kind: 'audioinput', deviceId: 'default', label: '', groupId: ''},
-	        {kind: 'videoinput', deviceId: 'default', label: '', groupId: ''}
-	      ];
-	      resolve(infos);
-	    });
-	  };
-
-	  if (webrtcDetectedVersion < 41) {
-	    // Work around http://bugzil.la/1169665
-	    var orgEnumerateDevices =
-	        navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
-	    navigator.mediaDevices.enumerateDevices = function() {
-	      return orgEnumerateDevices().then(undefined, function(e) {
-	        if (e.name === 'NotFoundError') {
-	          return [];
-	        }
-	        throw e;
-	      });
-	    };
-	  }
-	} else if (navigator.webkitGetUserMedia && window.webkitRTCPeerConnection) {
-	  webrtcUtils.log('This appears to be Chrome');
-
-	  webrtcDetectedBrowser = 'chrome';
-
-	  // the detected chrome version.
-	  webrtcDetectedVersion = webrtcUtils.extractVersion(navigator.userAgent,
-	      /Chrom(e|ium)\/([0-9]+)\./, 2);
-
-	  // the minimum chrome version still supported by adapter.
-	  webrtcMinimumVersion = 38;
-
-	  // The RTCPeerConnection object.
-	  window.RTCPeerConnection = function(pcConfig, pcConstraints) {
-	    // Translate iceTransportPolicy to iceTransports,
-	    // see https://code.google.com/p/webrtc/issues/detail?id=4869
-	    if (pcConfig && pcConfig.iceTransportPolicy) {
-	      pcConfig.iceTransports = pcConfig.iceTransportPolicy;
-	    }
-
-	    var pc = new webkitRTCPeerConnection(pcConfig, pcConstraints); // jscs:ignore requireCapitalizedConstructors
-	    var origGetStats = pc.getStats.bind(pc);
-	    pc.getStats = function(selector, successCallback, errorCallback) { // jshint ignore: line
-	      var self = this;
-	      var args = arguments;
-
-	      // If selector is a function then we are in the old style stats so just
-	      // pass back the original getStats format to avoid breaking old users.
-	      if (arguments.length > 0 && typeof selector === 'function') {
-	        return origGetStats(selector, successCallback);
-	      }
-
-	      var fixChromeStats = function(response) {
-	        var standardReport = {};
-	        var reports = response.result();
-	        reports.forEach(function(report) {
-	          var standardStats = {
-	            id: report.id,
-	            timestamp: report.timestamp,
-	            type: report.type
-	          };
-	          report.names().forEach(function(name) {
-	            standardStats[name] = report.stat(name);
-	          });
-	          standardReport[standardStats.id] = standardStats;
-	        });
-
-	        return standardReport;
-	      };
-
-	      if (arguments.length >= 2) {
-	        var successCallbackWrapper = function(response) {
-	          args[1](fixChromeStats(response));
-	        };
-
-	        return origGetStats.apply(this, [successCallbackWrapper, arguments[0]]);
-	      }
-
-	      // promise-support
-	      return new Promise(function(resolve, reject) {
-	        if (args.length === 1 && selector === null) {
-	          origGetStats.apply(self, [
-	              function(response) {
-	                resolve.apply(null, [fixChromeStats(response)]);
-	              }, reject]);
-	        } else {
-	          origGetStats.apply(self, [resolve, reject]);
-	        }
-	      });
-	    };
-
-	    return pc;
-	  };
-
-	  // add promise support
-	  ['createOffer', 'createAnswer'].forEach(function(method) {
-	    var nativeMethod = webkitRTCPeerConnection.prototype[method];
-	    webkitRTCPeerConnection.prototype[method] = function() {
-	      var self = this;
-	      if (arguments.length < 1 || (arguments.length === 1 &&
-	          typeof(arguments[0]) === 'object')) {
-	        var opts = arguments.length === 1 ? arguments[0] : undefined;
-	        return new Promise(function(resolve, reject) {
-	          nativeMethod.apply(self, [resolve, reject, opts]);
-	        });
-	      } else {
-	        return nativeMethod.apply(this, arguments);
-	      }
-	    };
-	  });
-
-	  ['setLocalDescription', 'setRemoteDescription',
-	      'addIceCandidate'].forEach(function(method) {
-	    var nativeMethod = webkitRTCPeerConnection.prototype[method];
-	    webkitRTCPeerConnection.prototype[method] = function() {
-	      var args = arguments;
-	      var self = this;
-	      return new Promise(function(resolve, reject) {
-	        nativeMethod.apply(self, [args[0],
-	            function() {
-	              resolve();
-	              if (args.length >= 2) {
-	                args[1].apply(null, []);
-	              }
-	            },
-	            function(err) {
-	              reject(err);
-	              if (args.length >= 3) {
-	                args[2].apply(null, [err]);
-	              }
-	            }]
-	          );
-	      });
-	    };
-	  });
-
-	  // getUserMedia constraints shim.
-	  var constraintsToChrome = function(c) {
-	    if (typeof c !== 'object' || c.mandatory || c.optional) {
-	      return c;
-	    }
-	    var cc = {};
-	    Object.keys(c).forEach(function(key) {
-	      if (key === 'require' || key === 'advanced' || key === 'mediaSource') {
-	        return;
-	      }
-	      var r = (typeof c[key] === 'object') ? c[key] : {ideal: c[key]};
-	      if (r.exact !== undefined && typeof r.exact === 'number') {
-	        r.min = r.max = r.exact;
-	      }
-	      var oldname = function(prefix, name) {
-	        if (prefix) {
-	          return prefix + name.charAt(0).toUpperCase() + name.slice(1);
-	        }
-	        return (name === 'deviceId') ? 'sourceId' : name;
-	      };
-	      if (r.ideal !== undefined) {
-	        cc.optional = cc.optional || [];
-	        var oc = {};
-	        if (typeof r.ideal === 'number') {
-	          oc[oldname('min', key)] = r.ideal;
-	          cc.optional.push(oc);
-	          oc = {};
-	          oc[oldname('max', key)] = r.ideal;
-	          cc.optional.push(oc);
-	        } else {
-	          oc[oldname('', key)] = r.ideal;
-	          cc.optional.push(oc);
-	        }
-	      }
-	      if (r.exact !== undefined && typeof r.exact !== 'number') {
-	        cc.mandatory = cc.mandatory || {};
-	        cc.mandatory[oldname('', key)] = r.exact;
-	      } else {
-	        ['min', 'max'].forEach(function(mix) {
-	          if (r[mix] !== undefined) {
-	            cc.mandatory = cc.mandatory || {};
-	            cc.mandatory[oldname(mix, key)] = r[mix];
-	          }
-	        });
-	      }
-	    });
-	    if (c.advanced) {
-	      cc.optional = (cc.optional || []).concat(c.advanced);
-	    }
-	    return cc;
-	  };
-
-	  getUserMedia = function(constraints, onSuccess, onError) {
-	    if (constraints.audio) {
-	      constraints.audio = constraintsToChrome(constraints.audio);
-	    }
-	    if (constraints.video) {
-	      constraints.video = constraintsToChrome(constraints.video);
-	    }
-	    webrtcUtils.log('chrome: ' + JSON.stringify(constraints));
-	    return navigator.webkitGetUserMedia(constraints, onSuccess, onError);
-	  };
-	  navigator.getUserMedia = getUserMedia;
-
-	  if (!navigator.mediaDevices) {
-	    navigator.mediaDevices = {getUserMedia: requestUserMedia,
-	                              enumerateDevices: function() {
-	      return new Promise(function(resolve) {
-	        var kinds = {audio: 'audioinput', video: 'videoinput'};
-	        return MediaStreamTrack.getSources(function(devices) {
-	          resolve(devices.map(function(device) {
-	            return {label: device.label,
-	                    kind: kinds[device.kind],
-	                    deviceId: device.id,
-	                    groupId: ''};
-	          }));
-	        });
-	      });
-	    }};
-	  }
-
-	  // A shim for getUserMedia method on the mediaDevices object.
-	  // TODO(KaptenJansson) remove once implemented in Chrome stable.
-	  if (!navigator.mediaDevices.getUserMedia) {
-	    navigator.mediaDevices.getUserMedia = function(constraints) {
-	      return requestUserMedia(constraints);
-	    };
-	  } else {
-	    // Even though Chrome 45 has navigator.mediaDevices and a getUserMedia
-	    // function which returns a Promise, it does not accept spec-style
-	    // constraints.
-	    var origGetUserMedia = navigator.mediaDevices.getUserMedia.
-	        bind(navigator.mediaDevices);
-	    navigator.mediaDevices.getUserMedia = function(c) {
-	      webrtcUtils.log('spec:   ' + JSON.stringify(c)); // whitespace for alignment
-	      c.audio = constraintsToChrome(c.audio);
-	      c.video = constraintsToChrome(c.video);
-	      webrtcUtils.log('chrome: ' + JSON.stringify(c));
-	      return origGetUserMedia(c);
-	    };
-	  }
-
-	  // Dummy devicechange event methods.
-	  // TODO(KaptenJansson) remove once implemented in Chrome stable.
-	  if (typeof navigator.mediaDevices.addEventListener === 'undefined') {
-	    navigator.mediaDevices.addEventListener = function() {
-	      webrtcUtils.log('Dummy mediaDevices.addEventListener called.');
-	    };
-	  }
-	  if (typeof navigator.mediaDevices.removeEventListener === 'undefined') {
-	    navigator.mediaDevices.removeEventListener = function() {
-	      webrtcUtils.log('Dummy mediaDevices.removeEventListener called.');
-	    };
-	  }
-
-	  // Attach a media stream to an element.
-	  attachMediaStream = function(element, stream) {
-	    if (webrtcDetectedVersion >= 43) {
-	      element.srcObject = stream;
-	    } else if (typeof element.src !== 'undefined') {
-	      element.src = URL.createObjectURL(stream);
-	    } else {
-	      webrtcUtils.log('Error attaching stream to element.');
-	    }
-	  };
-	  reattachMediaStream = function(to, from) {
-	    if (webrtcDetectedVersion >= 43) {
-	      to.srcObject = from.srcObject;
-	    } else {
-	      to.src = from.src;
-	    }
-	  };
-
-	} else if (navigator.mediaDevices && navigator.userAgent.match(
-	    /Edge\/(\d+).(\d+)$/)) {
-	  webrtcUtils.log('This appears to be Edge');
-	  webrtcDetectedBrowser = 'edge';
-
-	  webrtcDetectedVersion = webrtcUtils.extractVersion(navigator.userAgent,
-	      /Edge\/(\d+).(\d+)$/, 2);
-
-	  // the minimum version still supported by adapter.
-	  webrtcMinimumVersion = 12;
-	} else {
-	  webrtcUtils.log('Browser does not appear to be WebRTC-capable');
-	}
-
-	// Returns the result of getUserMedia as a Promise.
-	function requestUserMedia(constraints) {
-	  return new Promise(function(resolve, reject) {
-	    getUserMedia(constraints, resolve, reject);
-	  });
-	}
-
-	var webrtcTesting = {};
-	try {
-	  Object.defineProperty(webrtcTesting, 'version', {
-	    set: function(version) {
-	      webrtcDetectedVersion = version;
-	    }
-	  });
-	} catch (e) {}
-
-	if (true) {
-	  var RTCPeerConnection;
-	  if (typeof window !== 'undefined') {
-	    RTCPeerConnection = window.RTCPeerConnection;
-	  }
-	  module.exports = {
-	    RTCPeerConnection: RTCPeerConnection,
-	    getUserMedia: getUserMedia,
-	    attachMediaStream: attachMediaStream,
-	    reattachMediaStream: reattachMediaStream,
-	    webrtcDetectedBrowser: webrtcDetectedBrowser,
-	    webrtcDetectedVersion: webrtcDetectedVersion,
-	    webrtcMinimumVersion: webrtcMinimumVersion,
-	    webrtcTesting: webrtcTesting,
-	    webrtcUtils: webrtcUtils
-	    //requestUserMedia: not exposed on purpose.
-	    //trace: not exposed on purpose.
-	  };
-	} else if ((typeof require === 'function') && (typeof define === 'function')) {
-	  // Expose objects and functions when RequireJS is doing the loading.
-	  define([], function() {
-	    return {
-	      RTCPeerConnection: window.RTCPeerConnection,
-	      getUserMedia: getUserMedia,
-	      attachMediaStream: attachMediaStream,
-	      reattachMediaStream: reattachMediaStream,
-	      webrtcDetectedBrowser: webrtcDetectedBrowser,
-	      webrtcDetectedVersion: webrtcDetectedVersion,
-	      webrtcMinimumVersion: webrtcMinimumVersion,
-	      webrtcTesting: webrtcTesting,
-	      webrtcUtils: webrtcUtils
-	      //requestUserMedia: not exposed on purpose.
-	      //trace: not exposed on purpose.
-	    };
-	  });
-	}
 
 
 /***/ },
-/* 3 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;// Last time updated at Tuesday, October 27th, 2015, 4:33:33 PM 
-
-	// links:
-	// Open-Sourced: https://github.com/muaz-khan/RecordRTC
-	// https://cdn.WebRTC-Experiment.com/RecordRTC.js
-	// https://www.WebRTC-Experiment.com/RecordRTC.js
-	// npm install recordrtc
-	// http://recordrtc.org/
-
-	// updates?
-	/*
-	-. Added support for MediaRecorder API in Chrome. Currently requires: RecordRTC(stream, {recorderType: MediaStreamRecorder})
-	-. mimeType, bitsPerSecond, audioBitsPerSecond, videoBitsPerSecond added.
-	-. CanvasRecorder.js updated to support Firefox. (experimental)
-	-. Now you can reuse single RecordRTC object i.e. stop/start/stop/start/ and so on.
-	-. GifRecorder.js can now record HTMLCanvasElement|CanvasRenderingContext2D as well.
-	-. added: frameInterval:20 for WhammyRecorder.js
-	-. chrome issue  audio plus 720p-video recording can be fixed by setting bufferSize:16384
-	-. fixed Firefox save-as dialog i.e. recordRTC.save('filen-name')
-	-. "indexedDB" bug fixed for Firefox.
-	-. numberOfAudioChannels:1 can be passed to reduce WAV size in Chrome.
-	-. StereoRecorder.js is removed. It was redundant. Now RecordRTC is directly using: StereoAudioRecorder.js
-	-. mergeProps is removed. It was redundant.
-	-. reformatProps is removed. Now plz pass exact frameRate/sampleRate instead of frame-rate/sample-rate
-	-. Firefox supports remote-audio-recording since v28 - RecordRTC(remoteStream, { recorderType: StereoAudioRecorder });
-	-. added 3 methods: initRecorder, setRecordingDuration and clearRecordedData
-	-. Microsoft Edge support added (only-audio-yet).
-	-. You can pass "recorderType" - RecordRTC(stream, { recorderType: StereoAudioRecorder });
-	-. If MediaStream is suddenly stopped in Firefox.
-	-. Added "disableLogs"         - RecordRTC(stream, { disableLogs: true });
-	-. You can pass "bufferSize:0" - RecordRTC(stream, { bufferSize: 0 });
-	-. You can set "leftChannel"   - RecordRTC(stream, { leftChannel: true });
-	-. Added functionality for analyse black frames and cut them - pull#293
-	-. if you're recording GIF, you must link: https://cdn.webrtc-experiment.com/gif-recorder.js
-	-. You can set "frameInterval" for video - RecordRTC(stream, { type: 'video', frameInterval: 100 });
-	*/
-
-	//------------------------------------
-
-	// Browsers Support::
-	// Chrome (all versions) [ audio/video separately ]
-	// Firefox ( >= 29 ) [ audio/video in single webm/mp4 container or only audio in ogg ]
-	// Opera (all versions) [ same as chrome ]
-	// Android (Chrome) [ only video ]
-	// Android (Opera) [ only video ]
-	// Android (Firefox) [ only video ]
-	// Microsoft Edge (Only Audio & Gif)
-
-	//------------------------------------
-	// Muaz Khan     - www.MuazKhan.com
-	// MIT License   - www.WebRTC-Experiment.com/licence
-	//------------------------------------
-	// Note: RecordRTC.js is using 3 other libraries; you need to accept their licences as well.
-	//------------------------------------
-	// 1. RecordRTC.js
-	// 2. MRecordRTC.js
-	// 3. Cross-Browser-Declarations.js
-	// 4. Storage.js
-	// 5. MediaStreamRecorder.js
-	// 6. StereoAudioRecorder.js
-	// 7. CanvasRecorder.js
-	// 8. WhammyRecorder.js
-	// 9. Whammy.js
-	// 10. DiskStorage.js
-	// 11. GifRecorder.js
-	//------------------------------------
-
-	'use strict';
-
-	// ____________
-	// RecordRTC.js
-
-	/**
-	 * {@link https://github.com/muaz-khan/RecordRTC|RecordRTC} is a JavaScript-based media-recording library for modern web-browsers (supporting WebRTC getUserMedia API). It is optimized for different devices and browsers to bring all client-side (pluginfree) recording solutions in single place.
-	 * @summary JavaScript audio/video recording library runs top over WebRTC getUserMedia API.
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @typedef RecordRTC
-	 * @class
-	 * @example
-	 * var recordRTC = RecordRTC(mediaStream, {
-	 *     type: 'video' // audio or video or gif or canvas
-	 * });
-	 *
-	 * // or, you can even use keyword "new"
-	 * var recordRTC = new RecordRTC(mediaStream[, config]);
-	 * @see For further information:
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
-	 * @param {object} config - {type:"video", disableLogs: true, numberOfAudioChannels: 1, bufferSize: 0, sampleRate: 0, video: HTMLVideoElement, etc.}
-	 */
-
-	function RecordRTC(mediaStream, config) {
-	    if (!mediaStream) {
-	        throw 'MediaStream is mandatory.';
-	    }
-
-	    config = new RecordRTCConfiguration(mediaStream, config);
-
-	    // a reference to user's recordRTC object
-	    var self = this;
-
-	    function startRecording() {
-	        if (!config.disableLogs) {
-	            console.debug('started recording ' + config.type + ' stream.');
-	        }
-
-	        if (mediaRecorder) {
-	            mediaRecorder.clearRecordedData();
-	            mediaRecorder.resume();
-
-	            if (self.recordingDuration) {
-	                handleRecordingDuration();
-	            }
-	            return self;
-	        }
-
-	        initRecorder(function() {
-	            if (self.recordingDuration) {
-	                handleRecordingDuration();
-	            }
-	        });
-
-	        return self;
-	    }
-
-	    function initRecorder(initCallback) {
-	        if (!config.disableLogs) {
-	            console.debug('initializing ' + config.type + ' stream recorder.');
-	        }
-
-	        if (initCallback) {
-	            config.initCallback = function() {
-	                initCallback();
-	                initCallback = config.initCallback = null; // recordRTC.initRecorder should be call-backed once.
-	            };
-	        }
-
-	        var Recorder = new GetRecorderType(mediaStream, config);
-
-	        mediaRecorder = new Recorder(mediaStream, config);
-	        mediaRecorder.record();
-	    }
-
-	    function stopRecording(callback) {
-	        if (!mediaRecorder) {
-	            return console.warn(WARNING);
-	        }
-
-	        /*jshint validthis:true */
-	        var recordRTC = this;
-
-	        if (!config.disableLogs) {
-	            console.warn('Stopped recording ' + config.type + ' stream.');
-	        }
-
-	        if (config.type !== 'gif') {
-	            mediaRecorder.stop(_callback);
-	        } else {
-	            mediaRecorder.stop();
-	            _callback();
-	        }
-
-	        function _callback() {
-	            for (var item in mediaRecorder) {
-	                if (self) {
-	                    self[item] = mediaRecorder[item];
-	                }
-
-	                if (recordRTC) {
-	                    recordRTC[item] = mediaRecorder[item];
-	                }
-	            }
-
-	            var blob = mediaRecorder.blob;
-	            if (callback) {
-	                var url = URL.createObjectURL(blob);
-	                callback(url);
-	            }
-
-	            if (blob && !config.disableLogs) {
-	                console.debug(blob.type, '->', bytesToSize(blob.size));
-	            }
-
-	            if (!config.autoWriteToDisk) {
-	                return;
-	            }
-
-	            getDataURL(function(dataURL) {
-	                var parameter = {};
-	                parameter[config.type + 'Blob'] = dataURL;
-	                DiskStorage.Store(parameter);
-	            });
-	        }
-	    }
-
-	    function pauseRecording() {
-	        if (!mediaRecorder) {
-	            return console.warn(WARNING);
-	        }
-
-	        mediaRecorder.pause();
-
-	        if (!config.disableLogs) {
-	            console.debug('Paused recording.');
-	        }
-	    }
-
-	    function resumeRecording() {
-	        if (!mediaRecorder) {
-	            return console.warn(WARNING);
-	        }
-
-	        // not all libs yet having  this method
-	        mediaRecorder.resume();
-
-	        if (!config.disableLogs) {
-	            console.debug('Resumed recording.');
-	        }
-	    }
-
-	    function getDataURL(callback, _mediaRecorder) {
-	        if (!callback) {
-	            throw 'Pass a callback function over getDataURL.';
-	        }
-
-	        var blob = _mediaRecorder ? _mediaRecorder.blob : mediaRecorder.blob;
-
-	        if (!blob) {
-	            if (!config.disableLogs) {
-	                console.warn('Blob encoder did not yet finished its job.');
-	            }
-
-	            setTimeout(function() {
-	                getDataURL(callback, _mediaRecorder);
-	            }, 1000);
-	            return;
-	        }
-
-	        if (typeof Worker !== 'undefined') {
-	            var webWorker = processInWebWorker(function readFile(_blob) {
-	                postMessage(new FileReaderSync().readAsDataURL(_blob));
-	            });
-
-	            webWorker.onmessage = function(event) {
-	                callback(event.data);
-	            };
-
-	            webWorker.postMessage(blob);
-	        } else {
-	            var reader = new FileReader();
-	            reader.readAsDataURL(blob);
-	            reader.onload = function(event) {
-	                callback(event.target.result);
-	            };
-	        }
-
-	        function processInWebWorker(_function) {
-	            var blob = URL.createObjectURL(new Blob([_function.toString(),
-	                'this.onmessage =  function (e) {' + _function.name + '(e.data);}'
-	            ], {
-	                type: 'application/javascript'
-	            }));
-
-	            var worker = new Worker(blob);
-	            URL.revokeObjectURL(blob);
-	            return worker;
-	        }
-	    }
-
-	    function handleRecordingDuration() {
-	        setTimeout(function() {
-	            stopRecording(self.onRecordingStopped);
-	        }, self.recordingDuration);
-	    }
-
-	    var WARNING = 'It seems that "startRecording" is not invoked for ' + config.type + ' recorder.';
-
-	    var mediaRecorder;
-
-	    var returnObject = {
-	        /**
-	         * This method starts recording. It doesn't take any argument.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.startRecording();
-	         */
-	        startRecording: startRecording,
-
-	        /**
-	         * This method stops recording. It takes single "callback" argument. It is suggested to get blob or URI in the callback to make sure all encoders finished their jobs.
-	         * @param {function} callback - This callback function is invoked after completion of all encoding jobs.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.stopRecording(function(videoURL) {
-	         *     video.src = videoURL;
-	         *     recordRTC.blob; recordRTC.buffer;
-	         * });
-	         */
-	        stopRecording: stopRecording,
-
-	        /**
-	         * This method pauses the recording process.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.pauseRecording();
-	         */
-	        pauseRecording: pauseRecording,
-
-	        /**
-	         * This method resumes the recording process.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.resumeRecording();
-	         */
-	        resumeRecording: resumeRecording,
-
-	        /**
-	         * This method initializes the recording process.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.initRecorder();
-	         */
-	        initRecorder: initRecorder,
-
-	        /**
-	         * This method initializes the recording process.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.initRecorder();
-	         */
-	        setRecordingDuration: function(milliseconds, callback) {
-	            if (typeof milliseconds === 'undefined') {
-	                throw 'milliseconds is required.';
-	            }
-
-	            if (typeof milliseconds !== 'number') {
-	                throw 'milliseconds must be a number.';
-	            }
-
-	            self.recordingDuration = milliseconds;
-	            self.onRecordingStopped = callback || function() {};
-
-	            return {
-	                onRecordingStopped: function(callback) {
-	                    self.onRecordingStopped = callback;
-	                }
-	            };
-	        },
-
-	        /**
-	         * This method can be used to clear/reset all the recorded data.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.clearRecordedData();
-	         */
-	        clearRecordedData: function() {
-	            if (!mediaRecorder) {
-	                return console.warn(WARNING);
-	            }
-
-	            mediaRecorder.clearRecordedData();
-
-	            if (!config.disableLogs) {
-	                console.debug('Cleared old recorded data.');
-	            }
-	        },
-
-	        /**
-	         * It is equivalent to <code class="str">"recordRTC.blob"</code> property.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.stopRecording(function() {
-	         *     var blob = recordRTC.getBlob();
-	         *
-	         *     // equivalent to: recordRTC.blob property
-	         *     var blob = recordRTC.blob;
-	         * });
-	         */
-	        getBlob: function() {
-	            if (!mediaRecorder) {
-	                return console.warn(WARNING);
-	            }
-
-	            return mediaRecorder.blob;
-	        },
-
-	        /**
-	         * This method returns DataURL. It takes single "callback" argument.
-	         * @param {function} callback - DataURL is passed back over this callback.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.stopRecording(function() {
-	         *     recordRTC.getDataURL(function(dataURL) {
-	         *         video.src = dataURL;
-	         *     });
-	         * });
-	         */
-	        getDataURL: getDataURL,
-
-	        /**
-	         * This method returns Virutal/Blob URL. It doesn't take any argument.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.stopRecording(function() {
-	         *     video.src = recordRTC.toURL();
-	         * });
-	         */
-	        toURL: function() {
-	            if (!mediaRecorder) {
-	                return console.warn(WARNING);
-	            }
-
-	            return URL.createObjectURL(mediaRecorder.blob);
-	        },
-
-	        /**
-	         * This method saves blob/file into disk (by inovking save-as dialog). It takes single (optional) argument i.e. FileName
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.stopRecording(function() {
-	         *     recordRTC.save('file-name');
-	         * });
-	         */
-	        save: function(fileName) {
-	            if (!mediaRecorder) {
-	                return console.warn(WARNING);
-	            }
-
-	            invokeSaveAsDialog(mediaRecorder.blob, fileName);
-	        },
-
-	        /**
-	         * This method gets blob from indexed-DB storage. It takes single "callback" argument.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.getFromDisk(function(dataURL) {
-	         *     video.src = dataURL;
-	         * });
-	         */
-	        getFromDisk: function(callback) {
-	            if (!mediaRecorder) {
-	                return console.warn(WARNING);
-	            }
-
-	            RecordRTC.getFromDisk(config.type, callback);
-	        },
-
-	        /**
-	         * This method appends prepends array of webp images to the recorded video-blob. It takes an "array" object.
-	         * @type {Array.<Array>}
-	         * @param {Array} arrayOfWebPImages - Array of webp images.
-	         * @method
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * var arrayOfWebPImages = [];
-	         * arrayOfWebPImages.push({
-	         *     duration: index,
-	         *     image: 'data:image/webp;base64,...'
-	         * });
-	         * recordRTC.setAdvertisementArray(arrayOfWebPImages);
-	         */
-	        setAdvertisementArray: function(arrayOfWebPImages) {
-	            config.advertisement = [];
-
-	            var length = arrayOfWebPImages.length;
-	            for (var i = 0; i < length; i++) {
-	                config.advertisement.push({
-	                    duration: i,
-	                    image: arrayOfWebPImages[i]
-	                });
-	            }
-	        },
-
-	        /**
-	         * It is equivalent to <code class="str">"recordRTC.getBlob()"</code> method.
-	         * @property {Blob} blob - Recorded Blob can be accessed using this property.
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.stopRecording(function() {
-	         *     var blob = recordRTC.blob;
-	         *
-	         *     // equivalent to: recordRTC.getBlob() method
-	         *     var blob = recordRTC.getBlob();
-	         * });
-	         */
-	        blob: null,
-
-	        /**
-	         * @todo Add descriptions.
-	         * @property {number} bufferSize - Either audio device's default buffer-size, or your custom value.
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.stopRecording(function() {
-	         *     var bufferSize = recordRTC.bufferSize;
-	         * });
-	         */
-	        bufferSize: 0,
-
-	        /**
-	         * @todo Add descriptions.
-	         * @property {number} sampleRate - Audio device's default sample rates.
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.stopRecording(function() {
-	         *     var sampleRate = recordRTC.sampleRate;
-	         * });
-	         */
-	        sampleRate: 0,
-
-	        /**
-	         * @todo Add descriptions.
-	         * @property {ArrayBuffer} buffer - Audio ArrayBuffer, supported only in Chrome.
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.stopRecording(function() {
-	         *     var buffer = recordRTC.buffer;
-	         * });
-	         */
-	        buffer: null,
-
-	        /**
-	         * @todo Add descriptions.
-	         * @property {DataView} view - Audio DataView, supported only in Chrome.
-	         * @memberof RecordRTC
-	         * @instance
-	         * @example
-	         * recordRTC.stopRecording(function() {
-	         *     var dataView = recordRTC.view;
-	         * });
-	         */
-	        view: null
-	    };
-
-	    if (!this) {
-	        self = returnObject;
-	        return returnObject;
-	    }
-
-	    // if someone wanna use RecordRTC with "new" keyword.
-	    for (var prop in returnObject) {
-	        this[prop] = returnObject[prop];
-	    }
-
-	    self = this;
-
-	    return returnObject;
-	}
-
-	/**
-	 * This method can be used to get all recorded blobs from IndexedDB storage.
-	 * @param {string} type - 'all' or 'audio' or 'video' or 'gif'
-	 * @param {function} callback - Callback function to get all stored blobs.
-	 * @method
-	 * @memberof RecordRTC
-	 * @example
-	 * RecordRTC.getFromDisk('all', function(dataURL, type){
-	 *     if(type === 'audio') { }
-	 *     if(type === 'video') { }
-	 *     if(type === 'gif')   { }
-	 * });
-	 */
-	RecordRTC.getFromDisk = function(type, callback) {
-	    if (!callback) {
-	        throw 'callback is mandatory.';
-	    }
-
-	    console.log('Getting recorded ' + (type === 'all' ? 'blobs' : type + ' blob ') + ' from disk!');
-	    DiskStorage.Fetch(function(dataURL, _type) {
-	        if (type !== 'all' && _type === type + 'Blob' && callback) {
-	            callback(dataURL);
-	        }
-
-	        if (type === 'all' && callback) {
-	            callback(dataURL, _type.replace('Blob', ''));
-	        }
-	    });
-	};
-
-	/**
-	 * This method can be used to store recorded blobs into IndexedDB storage.
-	 * @param {object} options - {audio: Blob, video: Blob, gif: Blob}
-	 * @method
-	 * @memberof RecordRTC
-	 * @example
-	 * RecordRTC.writeToDisk({
-	 *     audio: audioBlob,
-	 *     video: videoBlob,
-	 *     gif  : gifBlob
-	 * });
-	 */
-	RecordRTC.writeToDisk = function(options) {
-	    console.log('Writing recorded blob(s) to disk!');
-	    options = options || {};
-	    if (options.audio && options.video && options.gif) {
-	        options.audio.getDataURL(function(audioDataURL) {
-	            options.video.getDataURL(function(videoDataURL) {
-	                options.gif.getDataURL(function(gifDataURL) {
-	                    DiskStorage.Store({
-	                        audioBlob: audioDataURL,
-	                        videoBlob: videoDataURL,
-	                        gifBlob: gifDataURL
-	                    });
-	                });
-	            });
-	        });
-	    } else if (options.audio && options.video) {
-	        options.audio.getDataURL(function(audioDataURL) {
-	            options.video.getDataURL(function(videoDataURL) {
-	                DiskStorage.Store({
-	                    audioBlob: audioDataURL,
-	                    videoBlob: videoDataURL
-	                });
-	            });
-	        });
-	    } else if (options.audio && options.gif) {
-	        options.audio.getDataURL(function(audioDataURL) {
-	            options.gif.getDataURL(function(gifDataURL) {
-	                DiskStorage.Store({
-	                    audioBlob: audioDataURL,
-	                    gifBlob: gifDataURL
-	                });
-	            });
-	        });
-	    } else if (options.video && options.gif) {
-	        options.video.getDataURL(function(videoDataURL) {
-	            options.gif.getDataURL(function(gifDataURL) {
-	                DiskStorage.Store({
-	                    videoBlob: videoDataURL,
-	                    gifBlob: gifDataURL
-	                });
-	            });
-	        });
-	    } else if (options.audio) {
-	        options.audio.getDataURL(function(audioDataURL) {
-	            DiskStorage.Store({
-	                audioBlob: audioDataURL
-	            });
-	        });
-	    } else if (options.video) {
-	        options.video.getDataURL(function(videoDataURL) {
-	            DiskStorage.Store({
-	                videoBlob: videoDataURL
-	            });
-	        });
-	    } else if (options.gif) {
-	        options.gif.getDataURL(function(gifDataURL) {
-	            DiskStorage.Store({
-	                gifBlob: gifDataURL
-	            });
-	        });
-	    }
-	};
-
-	if (true /* && !!module.exports*/ ) {
-	    module.exports = RecordRTC;
-	}
-
-	if (true) {
-	    !(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_RESULT__ = function() {
-	        return RecordRTC;
-	    }.apply(exports, __WEBPACK_AMD_DEFINE_ARRAY__), __WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
-	}
-
-	// __________________________
-	// RecordRTC-Configuration.js
-
-	/**
-	 * {@link RecordRTCConfiguration} is an inner/private helper for {@link RecordRTC}.
-	 * @summary It configures the 2nd parameter passed over {@link RecordRTC} and returns a valid "config" object.
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @typedef RecordRTCConfiguration
-	 * @class
-	 * @example
-	 * var options = RecordRTCConfiguration(mediaStream, options);
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
-	 * @param {object} config - {type:"video", disableLogs: true, numberOfAudioChannels: 1, bufferSize: 0, sampleRate: 0, video: HTMLVideoElement, etc.}
-	 */
-
-	function RecordRTCConfiguration(mediaStream, config) {
-	    if (config.recorderType && !config.type) {
-	        if (config.recorderType === WhammyRecorder || config.recorderType === CanvasRecorder) {
-	            config.type = 'video';
-	        } else if (config.recorderType === GifRecorder) {
-	            config.type = 'gif';
-	        } else if (config.recorderType === StereoAudioRecorder) {
-	            config.type = 'audio';
-	        } else if (config.recorderType === MediaStreamRecorder) {
-	            if (mediaStream.getAudioTracks().length && mediaStream.getVideoTracks().length) {
-	                config.type = 'video';
-	            } else if (mediaStream.getAudioTracks().length && !mediaStream.getVideoTracks().length) {
-	                config.type = 'audio';
-	            } else if (!mediaStream.getAudioTracks().length && mediaStream.getVideoTracks().length) {
-	                config.type = 'audio';
-	            } else {
-	                // config.type = 'UnKnown';
-	            }
-	        }
-	    }
-
-	    if (typeof MediaStreamRecorder !== 'undefined' && typeof MediaRecorder !== 'undefined' && 'requestData' in MediaRecorder.prototype) {
-	        if (!config.mimeType) {
-	            config.mimeType = 'video/webm';
-	        }
-
-	        if (!config.type) {
-	            config.type = config.mimeType.split('/')[0];
-	        }
-
-	        if (!config.bitsPerSecond) {
-	            config.bitsPerSecond = 128000;
-	        }
-	    }
-
-	    // consider default type=audio
-	    if (!config.type) {
-	        if (config.mimeType) {
-	            config.type = config.mimeType.split('/')[0];
-	        }
-	        if (!config.type) {
-	            config.type = 'audio';
-	        }
-	    }
-
-	    return config;
-	}
-
-	// __________________
-	// GetRecorderType.js
-
-	/**
-	 * {@link GetRecorderType} is an inner/private helper for {@link RecordRTC}.
-	 * @summary It returns best recorder-type available for your browser.
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @typedef GetRecorderType
-	 * @class
-	 * @example
-	 * var RecorderType = GetRecorderType(options);
-	 * var recorder = new RecorderType(options);
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
-	 * @param {object} config - {type:"video", disableLogs: true, numberOfAudioChannels: 1, bufferSize: 0, sampleRate: 0, video: HTMLVideoElement, etc.}
-	 */
-
-	function GetRecorderType(mediaStream, config) {
-	    var recorder;
-
-	    // StereoAudioRecorder can work with all three: Edge, Firefox and Chrome
-	    // todo: detect if it is Edge, then auto use: StereoAudioRecorder
-	    if (isChrome || isEdge || isOpera) {
-	        // Media Stream Recording API has not been implemented in chrome yet;
-	        // That's why using WebAudio API to record stereo audio in WAV format
-	        recorder = StereoAudioRecorder;
-	    }
-
-	    if (typeof MediaRecorder !== 'undefined' && 'requestData' in MediaRecorder.prototype && !isChrome) {
-	        recorder = MediaStreamRecorder;
-	    }
-
-	    // video recorder (in WebM format)
-	    if (config.type === 'video' && (isChrome || isOpera)) {
-	        recorder = WhammyRecorder;
-	    }
-
-	    // video recorder (in Gif format)
-	    if (config.type === 'gif') {
-	        recorder = GifRecorder;
-	    }
-
-	    // html2canvas recording!
-	    if (config.type === 'canvas') {
-	        recorder = CanvasRecorder;
-	    }
-
-	    // todo: enable below block when MediaRecorder in Chrome gets out of flags; and it also supports audio recording.
-	    if (false) {
-	        if (mediaStream.getVideoTracks().length) {
-	            recorder = MediaStreamRecorder;
-	            if (!config.disableLogs) {
-	                console.debug('Using MediaRecorder API in chrome!');
-	            }
-	        }
-	    }
-
-	    if (config.recorderType) {
-	        recorder = config.recorderType;
-	    }
-
-	    return recorder;
-	}
-
-	// _____________
-	// MRecordRTC.js
-
-	/**
-	 * MRecordRTC runs top over {@link RecordRTC} to bring multiple recordings in single place, by providing simple API.
-	 * @summary MRecordRTC stands for "Multiple-RecordRTC".
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @typedef MRecordRTC
-	 * @class
-	 * @example
-	 * var recorder = new MRecordRTC();
-	 * recorder.addStream(MediaStream);
-	 * recorder.mediaType = {
-	 *     audio: true,
-	 *     video: true,
-	 *     gif: true
-	 * };
-	 * recorder.startRecording();
-	 * @see For further information:
-	 * @see {@link https://github.com/muaz-khan/RecordRTC/tree/master/MRecordRTC|MRecordRTC Source Code}
-	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
-	 */
-
-	function MRecordRTC(mediaStream) {
-
-	    /**
-	     * This method attaches MediaStream object to {@link MRecordRTC}.
-	     * @param {MediaStream} mediaStream - A MediaStream object, either fetched using getUserMedia API, or generated using captureStreamUntilEnded or WebAudio API.
-	     * @method
-	     * @memberof MRecordRTC
-	     * @example
-	     * recorder.addStream(MediaStream);
-	     */
-	    this.addStream = function(_mediaStream) {
-	        if (_mediaStream) {
-	            mediaStream = _mediaStream;
-	        }
-	    };
-
-	    /**
-	     * This property can be used to set recording type e.g. audio, or video, or gif, or canvas.
-	     * @property {object} mediaType - {audio: true, video: true, gif: true}
-	     * @memberof MRecordRTC
-	     * @example
-	     * var recorder = new MRecordRTC();
-	     * recorder.mediaType = {
-	     *     audio: true,
-	     *     video: true,
-	     *     gif  : true
-	     * };
-	     */
-	    this.mediaType = {
-	        audio: true,
-	        video: true
-	    };
-
-	    /**
-	     * This method starts recording.
-	     * @method
-	     * @memberof MRecordRTC
-	     * @example
-	     * recorder.startRecording();
-	     */
-	    this.startRecording = function() {
-	        if (!isChrome && mediaStream && mediaStream.getAudioTracks && mediaStream.getAudioTracks().length && mediaStream.getVideoTracks().length) {
-	            // Firefox is supporting both audio/video in single blob
-	            this.mediaType.audio = false;
-	        }
-
-	        if (this.mediaType.audio) {
-	            this.audioRecorder = new RecordRTC(mediaStream, {
-	                type: 'audio',
-	                bufferSize: this.bufferSize,
-	                sampleRate: this.sampleRate
-	            });
-	            this.audioRecorder.startRecording();
-	        }
-
-	        if (this.mediaType.video) {
-	            this.videoRecorder = new RecordRTC(mediaStream, {
-	                type: 'video',
-	                video: this.video,
-	                canvas: this.canvas
-	            });
-	            this.videoRecorder.startRecording();
-	        }
-
-	        if (this.mediaType.gif) {
-	            this.gifRecorder = new RecordRTC(mediaStream, {
-	                type: 'gif',
-	                frameRate: this.frameRate || 200,
-	                quality: this.quality || 10
-	            });
-	            this.gifRecorder.startRecording();
-	        }
-	    };
-
-	    /**
-	     * This method stop recording.
-	     * @param {function} callback - Callback function is invoked when all encoders finish their jobs.
-	     * @method
-	     * @memberof MRecordRTC
-	     * @example
-	     * recorder.stopRecording(function(recording){
-	     *     var audioBlob = recording.audio;
-	     *     var videoBlob = recording.video;
-	     *     var gifBlob   = recording.gif;
-	     * });
-	     */
-	    this.stopRecording = function(callback) {
-	        callback = callback || function() {};
-
-	        if (this.audioRecorder) {
-	            this.audioRecorder.stopRecording(function(blobURL) {
-	                callback(blobURL, 'audio');
-	            });
-	        }
-
-	        if (this.videoRecorder) {
-	            this.videoRecorder.stopRecording(function(blobURL) {
-	                callback(blobURL, 'video');
-	            });
-	        }
-
-	        if (this.gifRecorder) {
-	            this.gifRecorder.stopRecording(function(blobURL) {
-	                callback(blobURL, 'gif');
-	            });
-	        }
-	    };
-
-	    /**
-	     * This method can be used to manually get all recorded blobs.
-	     * @param {function} callback - All recorded blobs are passed back to "callback" function.
-	     * @method
-	     * @memberof MRecordRTC
-	     * @example
-	     * recorder.getBlob(function(recording){
-	     *     var audioBlob = recording.audio;
-	     *     var videoBlob = recording.video;
-	     *     var gifBlob   = recording.gif;
-	     * });
-	     * // or
-	     * var audioBlob = recorder.getBlob().audio;
-	     * var videoBlob = recorder.getBlob().video;
-	     */
-	    this.getBlob = function(callback) {
-	        var output = {};
-
-	        if (this.audioRecorder) {
-	            output.audio = this.audioRecorder.getBlob();
-	        }
-
-	        if (this.videoRecorder) {
-	            output.video = this.videoRecorder.getBlob();
-	        }
-
-	        if (this.gifRecorder) {
-	            output.gif = this.gifRecorder.getBlob();
-	        }
-
-	        if (callback) {
-	            callback(output);
-	        }
-
-	        return output;
-	    };
-
-	    /**
-	     * This method can be used to manually get all recorded blobs' DataURLs.
-	     * @param {function} callback - All recorded blobs' DataURLs are passed back to "callback" function.
-	     * @method
-	     * @memberof MRecordRTC
-	     * @example
-	     * recorder.getDataURL(function(recording){
-	     *     var audioDataURL = recording.audio;
-	     *     var videoDataURL = recording.video;
-	     *     var gifDataURL   = recording.gif;
-	     * });
-	     */
-	    this.getDataURL = function(callback) {
-	        this.getBlob(function(blob) {
-	            getDataURL(blob.audio, function(_audioDataURL) {
-	                getDataURL(blob.video, function(_videoDataURL) {
-	                    callback({
-	                        audio: _audioDataURL,
-	                        video: _videoDataURL
-	                    });
-	                });
-	            });
-	        });
-
-	        function getDataURL(blob, callback00) {
-	            if (typeof Worker !== 'undefined') {
-	                var webWorker = processInWebWorker(function readFile(_blob) {
-	                    postMessage(new FileReaderSync().readAsDataURL(_blob));
-	                });
-
-	                webWorker.onmessage = function(event) {
-	                    callback00(event.data);
-	                };
-
-	                webWorker.postMessage(blob);
-	            } else {
-	                var reader = new FileReader();
-	                reader.readAsDataURL(blob);
-	                reader.onload = function(event) {
-	                    callback00(event.target.result);
-	                };
-	            }
-	        }
-
-	        function processInWebWorker(_function) {
-	            var blob = URL.createObjectURL(new Blob([_function.toString(),
-	                'this.onmessage =  function (e) {' + _function.name + '(e.data);}'
-	            ], {
-	                type: 'application/javascript'
-	            }));
-
-	            var worker = new Worker(blob);
-	            var url;
-	            if (typeof URL !== 'undefined') {
-	                url = URL;
-	            } else if (typeof webkitURL !== 'undefined') {
-	                url = webkitURL;
-	            } else {
-	                throw 'Neither URL nor webkitURL detected.';
-	            }
-	            url.revokeObjectURL(blob);
-	            return worker;
-	        }
-	    };
-
-	    /**
-	     * This method can be used to ask {@link MRecordRTC} to write all recorded blobs into IndexedDB storage.
-	     * @method
-	     * @memberof MRecordRTC
-	     * @example
-	     * recorder.writeToDisk();
-	     */
-	    this.writeToDisk = function() {
-	        RecordRTC.writeToDisk({
-	            audio: this.audioRecorder,
-	            video: this.videoRecorder,
-	            gif: this.gifRecorder
-	        });
-	    };
-
-	    /**
-	     * This method can be used to invoke save-as dialog for all recorded blobs.
-	     * @param {object} args - {audio: 'audio-name', video: 'video-name', gif: 'gif-name'}
-	     * @method
-	     * @memberof MRecordRTC
-	     * @example
-	     * recorder.save({
-	     *     audio: 'audio-file-name',
-	     *     video: 'video-file-name',
-	     *     gif  : 'gif-file-name'
-	     * });
-	     */
-	    this.save = function(args) {
-	        args = args || {
-	            audio: true,
-	            video: true,
-	            gif: true
-	        };
-
-	        if (!!args.audio && this.audioRecorder) {
-	            this.audioRecorder.save(typeof args.audio === 'string' ? args.audio : '');
-	        }
-
-	        if (!!args.video && this.videoRecorder) {
-	            this.videoRecorder.save(typeof args.video === 'string' ? args.video : '');
-	        }
-	        if (!!args.gif && this.gifRecorder) {
-	            this.gifRecorder.save(typeof args.gif === 'string' ? args.gif : '');
-	        }
-	    };
-	}
-
-	/**
-	 * This method can be used to get all recorded blobs from IndexedDB storage.
-	 * @param {string} type - 'all' or 'audio' or 'video' or 'gif'
-	 * @param {function} callback - Callback function to get all stored blobs.
-	 * @method
-	 * @memberof MRecordRTC
-	 * @example
-	 * MRecordRTC.getFromDisk('all', function(dataURL, type){
-	 *     if(type === 'audio') { }
-	 *     if(type === 'video') { }
-	 *     if(type === 'gif')   { }
-	 * });
-	 */
-	MRecordRTC.getFromDisk = RecordRTC.getFromDisk;
-
-	/**
-	 * This method can be used to store recorded blobs into IndexedDB storage.
-	 * @param {object} options - {audio: Blob, video: Blob, gif: Blob}
-	 * @method
-	 * @memberof MRecordRTC
-	 * @example
-	 * MRecordRTC.writeToDisk({
-	 *     audio: audioBlob,
-	 *     video: videoBlob,
-	 *     gif  : gifBlob
-	 * });
-	 */
-	MRecordRTC.writeToDisk = RecordRTC.writeToDisk;
-
-	// _____________________________
-	// Cross-Browser-Declarations.js
-
-	// animation-frame used in WebM recording
-
-	/*jshint -W079 */
-	var requestAnimationFrame = window.requestAnimationFrame;
-	if (typeof requestAnimationFrame === 'undefined') {
-	    if (typeof webkitRequestAnimationFrame !== 'undefined') {
-	        /*global requestAnimationFrame:true */
-	        requestAnimationFrame = webkitRequestAnimationFrame;
-	    }
-
-	    if (typeof mozRequestAnimationFrame !== 'undefined') {
-	        /*global requestAnimationFrame:true */
-	        requestAnimationFrame = mozRequestAnimationFrame;
-	    }
-	}
-
-	/*jshint -W079 */
-	var cancelAnimationFrame = window.cancelAnimationFrame;
-	if (typeof cancelAnimationFrame === 'undefined') {
-	    if (typeof webkitCancelAnimationFrame !== 'undefined') {
-	        /*global cancelAnimationFrame:true */
-	        cancelAnimationFrame = webkitCancelAnimationFrame;
-	    }
-
-	    if (typeof mozCancelAnimationFrame !== 'undefined') {
-	        /*global cancelAnimationFrame:true */
-	        cancelAnimationFrame = mozCancelAnimationFrame;
-	    }
-	}
-
-	// WebAudio API representer
-	var AudioContext = window.AudioContext;
-
-	if (typeof AudioContext === 'undefined') {
-	    if (typeof webkitAudioContext !== 'undefined') {
-	        /*global AudioContext:true */
-	        AudioContext = webkitAudioContext;
-	    }
-
-	    if (typeof mozAudioContext !== 'undefined') {
-	        /*global AudioContext:true */
-	        AudioContext = mozAudioContext;
-	    }
-	}
-
-	/*jshint -W079 */
-	var URL = window.URL;
-
-	if (typeof URL === 'undefined' && typeof webkitURL !== 'undefined') {
-	    /*global URL:true */
-	    URL = webkitURL;
-	}
-
-	if (typeof navigator !== 'undefined') {
-	    if (typeof navigator.webkitGetUserMedia !== 'undefined') {
-	        navigator.getUserMedia = navigator.webkitGetUserMedia;
-	    }
-
-	    if (typeof navigator.mozGetUserMedia !== 'undefined') {
-	        navigator.getUserMedia = navigator.mozGetUserMedia;
-	    }
-	} else {
-	    // if you're using NPM or solutions where "navigator" is NOT available,
-	    // just define it globally before loading RecordRTC.js script.
-	    throw 'Please make sure to define a global variable named as "navigator"';
-	}
-
-	var isEdge = navigator.userAgent.indexOf('Edge') !== -1 && (!!navigator.msSaveBlob || !!navigator.msSaveOrOpenBlob);
-	var isOpera = !!window.opera || navigator.userAgent.indexOf('OPR/') !== -1;
-	var isChrome = !isOpera && !isEdge && !!navigator.webkitGetUserMedia;
-
-	var MediaStream = window.MediaStream;
-
-	if (typeof MediaStream === 'undefined' && typeof webkitMediaStream !== 'undefined') {
-	    MediaStream = webkitMediaStream;
-	}
-
-	/*global MediaStream:true */
-	if (typeof MediaStream !== 'undefined' && !('stop' in MediaStream.prototype)) {
-	    MediaStream.prototype.stop = function() {
-	        this.getAudioTracks().forEach(function(track) {
-	            track.stop();
-	        });
-
-	        this.getVideoTracks().forEach(function(track) {
-	            track.stop();
-	        });
-	    };
-	}
-
-	if (typeof location !== 'undefined') {
-	    if (location.href.indexOf('file:') === 0) {
-	        console.error('Please load this HTML file on HTTP or HTTPS.');
-	    }
-	}
-
-	// below function via: http://goo.gl/B3ae8c
-	/**
-	 * @param {number} bytes - Pass bytes and get formafted string.
-	 * @returns {string} - formafted string
-	 * @example
-	 * bytesToSize(1024*1024*5) === '5 GB'
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 */
-	function bytesToSize(bytes) {
-	    var k = 1000;
-	    var sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-	    if (bytes === 0) {
-	        return '0 Bytes';
-	    }
-	    var i = parseInt(Math.floor(Math.log(bytes) / Math.log(k)), 10);
-	    return (bytes / Math.pow(k, i)).toPrecision(3) + ' ' + sizes[i];
-	}
-
-	/**
-	 * @param {Blob} file - File or Blob object. This parameter is required.
-	 * @param {string} fileName - Optional file name e.g. "Recorded-Video.webm"
-	 * @example
-	 * invokeSaveAsDialog(blob or file, [optional] fileName);
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 */
-	function invokeSaveAsDialog(file, fileName) {
-	    if (!file) {
-	        throw 'Blob object is required.';
-	    }
-
-	    if (!file.type) {
-	        file.type = 'video/webm';
-	    }
-
-	    var fileExtension = file.type.split('/')[1];
-
-	    if (fileName && fileName.indexOf('.') !== -1) {
-	        var splitted = fileName.split('.');
-	        fileName = splitted[0];
-	        fileExtension = splitted[1];
-	    }
-
-	    var fileFullName = (fileName || (Math.round(Math.random() * 9999999999) + 888888888)) + '.' + fileExtension;
-
-	    if (typeof navigator.msSaveOrOpenBlob !== 'undefined') {
-	        return navigator.msSaveOrOpenBlob(file, fileFullName);
-	    } else if (typeof navigator.msSaveBlob !== 'undefined') {
-	        return navigator.msSaveBlob(file, fileFullName);
-	    }
-
-	    var hyperlink = document.createElement('a');
-	    hyperlink.href = URL.createObjectURL(file);
-	    hyperlink.target = '_blank';
-	    hyperlink.download = fileFullName;
-
-	    if (!!navigator.mozGetUserMedia) {
-	        hyperlink.onclick = function() {
-	            (document.body || document.documentElement).removeChild(hyperlink);
-	        };
-	        (document.body || document.documentElement).appendChild(hyperlink);
-	    }
-
-	    var evt = new MouseEvent('click', {
-	        view: window,
-	        bubbles: true,
-	        cancelable: true
-	    });
-
-	    hyperlink.dispatchEvent(evt);
-
-	    if (!navigator.mozGetUserMedia) {
-	        URL.revokeObjectURL(hyperlink.href);
-	    }
-	}
-
-	// __________ (used to handle stuff like http://goo.gl/xmE5eg) issue #129
-	// Storage.js
-
-	/**
-	 * Storage is a standalone object used by {@link RecordRTC} to store reusable objects e.g. "new AudioContext".
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @example
-	 * Storage.AudioContext === webkitAudioContext
-	 * @property {webkitAudioContext} AudioContext - Keeps a reference to AudioContext object.
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 */
-
-	var Storage = {};
-
-	if (typeof AudioContext !== 'undefined') {
-	    Storage.AudioContext = AudioContext;
-	} else if (typeof webkitAudioContext !== 'undefined') {
-	    Storage.AudioContext = webkitAudioContext;
-	}
-
-	// ______________________
-	// MediaStreamRecorder.js
-
-	// todo: need to show alert boxes for incompatible cases
-	// encoder only supports 48k/16k mono audio channel
-
-	/*
-	 * Implementation of https://dvcs.w3.org/hg/dap/raw-file/default/media-stream-capture/MediaRecorder.html
-	 * The MediaRecorder accepts a mediaStream as input source passed from UA. When recorder starts,
-	 * a MediaEncoder will be created and accept the mediaStream as input source.
-	 * Encoder will get the raw data by track data changes, encode it by selected MIME Type, then store the encoded in EncodedBufferCache object.
-	 * The encoded data will be extracted on every timeslice passed from Start function call or by RequestData function.
-	 * Thread model:
-	 * When the recorder starts, it creates a "Media Encoder" thread to read data from MediaEncoder object and store buffer in EncodedBufferCache object.
-	 * Also extract the encoded data and create blobs on every timeslice passed from start function or RequestData function called by UA.
-	 */
-
-	/**
-	 * MediaStreamRecorder is an abstraction layer for "MediaRecorder API". It is used by {@link RecordRTC} to record MediaStream(s) in Firefox.
-	 * @summary Runs top over MediaRecorder API.
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @typedef MediaStreamRecorder
-	 * @class
-	 * @example
-	 * var options = {
-	 *     mimeType: 'video/mp4', // audio/ogg or video/webm
-	 *     audioBitsPerSecond : 128000,
-	 *     videoBitsPerSecond : 2500000,
-	 *     bitsPerSecond: 2500000  // if this is provided, skip above two
-	 * }
-	 * var recorder = new MediaStreamRecorder(MediaStream, options);
-	 * recorder.record();
-	 * recorder.stop(function(blob) {
-	 *     video.src = URL.createObjectURL(blob);
-	 *
-	 *     // or
-	 *     var blob = recorder.blob;
-	 * });
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
-	 * @param {object} config - {disableLogs:true, initCallback: function, mimeType: "video/webm", onAudioProcessStarted: function}
-	 */
-
-	function MediaStreamRecorder(mediaStream, config) {
-	    config = config || {
-	        bitsPerSecond: 128000,
-	        mimeType: 'video/webm'
-	    };
-
-	    // if user chosen only audio option; and he tried to pass MediaStream with
-	    // both audio and video tracks;
-	    // using a dirty workaround to generate audio-only stream so that we can get audio/ogg output.
-	    if (!isChrome && config.type && config.type === 'audio') {
-	        if (mediaStream.getVideoTracks && mediaStream.getVideoTracks().length) {
-	            var context = new AudioContext();
-	            var mediaStreamSource = context.createMediaStreamSource(mediaStream);
-
-	            var destination = context.createMediaStreamDestination();
-	            mediaStreamSource.connect(destination);
-
-	            mediaStream = destination.stream;
-	        }
-
-	        if (!config.mimeType || config.mimeType.indexOf('audio') === -1) {
-	            config.mimeType = 'audio/ogg';
-	        }
-	    }
-
-	    var recordedBuffers = [];
-
-	    /**
-	     * This method records MediaStream.
-	     * @method
-	     * @memberof MediaStreamRecorder
-	     * @example
-	     * recorder.record();
-	     */
-	    this.record = function() {
-	        var recorderHints = config;
-
-	        if (isChrome) {
-	            if (!recorderHints || typeof recorderHints !== 'string') {
-	                recorderHints = 'video/vp8';
-
-	                // chrome currently supports only video recording
-	                mediaStream = new MediaStream(mediaStream.getVideoTracks());
-	            }
-	        }
-
-	        if (!config.disableLogs) {
-	            console.log('Passing following config over MediaRecorder API.', recorderHints);
-	        }
-
-	        if (mediaRecorder) {
-	            // mandatory to make sure Firefox doesn't fails to record streams 3-4 times without reloading the page.
-	            mediaRecorder = null;
-	        }
-
-	        // http://dxr.mozilla.org/mozilla-central/source/content/media/MediaRecorder.cpp
-	        // https://wiki.mozilla.org/Gecko:MediaRecorder
-	        // https://dvcs.w3.org/hg/dap/raw-file/default/media-stream-capture/MediaRecorder.html
-
-	        // starting a recording session; which will initiate "Reading Thread"
-	        // "Reading Thread" are used to prevent main-thread blocking scenarios
-	        mediaRecorder = new MediaRecorder(mediaStream, recorderHints);
-
-	        if ('canRecordMimeType' in mediaRecorder && mediaRecorder.canRecordMimeType(config.mimeType) === false) {
-	            if (!config.disableLogs) {
-	                console.warn('MediaRecorder API seems unable to record mimeType:', config.mimeType);
-	            }
-	        }
-
-	        // i.e. stop recording when <video> is paused by the user; and auto restart recording 
-	        // when video is resumed. E.g. yourStream.getVideoTracks()[0].muted = true; // it will auto-stop recording.
-	        mediaRecorder.ignoreMutedMedia = config.ignoreMutedMedia || false;
-
-	        // Dispatching OnDataAvailable Handler
-	        mediaRecorder.ondataavailable = function(e) {
-	            if (this.dontFireOnDataAvailableEvent) {
-	                return;
-	            }
-
-	            if (isChrome && e.data && !('size' in e.data)) {
-	                e.data.size = e.data.length || e.data.byteLength || 0;
-	            }
-
-	            if (e.data && e.data.size) {
-	                recordedBuffers.push(e.data);
-	            }
-	        };
-
-	        mediaRecorder.onerror = function(error) {
-	            if (!config.disableLogs) {
-	                if (error.name === 'InvalidState') {
-	                    console.error('The MediaRecorder is not in a state in which the proposed operation is allowed to be executed.');
-	                } else if (error.name === 'OutOfMemory') {
-	                    console.error('The UA has exhaused the available memory. User agents SHOULD provide as much additional information as possible in the message attribute.');
-	                } else if (error.name === 'IllegalStreamModification') {
-	                    console.error('A modification to the stream has occurred that makes it impossible to continue recording. An example would be the addition of a Track while recording is occurring. User agents SHOULD provide as much additional information as possible in the message attribute.');
-	                } else if (error.name === 'OtherRecordingError') {
-	                    console.error('Used for an fatal error other than those listed above. User agents SHOULD provide as much additional information as possible in the message attribute.');
-	                } else if (error.name === 'GenericError') {
-	                    console.error('The UA cannot provide the codec or recording option that has been requested.', error);
-	                } else {
-	                    console.error('MediaRecorder Error', error);
-	                }
-	            }
-
-	            // When the stream is "ended" set recording to 'inactive' 
-	            // and stop gathering data. Callers should not rely on 
-	            // exactness of the timeSlice value, especially 
-	            // if the timeSlice value is small. Callers should 
-	            // consider timeSlice as a minimum value
-
-	            if (mediaRecorder.state !== 'inactive' && mediaRecorder.state !== 'stopped') {
-	                mediaRecorder.stop();
-	            }
-	            // self.record(0);
-	        };
-
-	        // void start(optional long mTimeSlice)
-	        // The interval of passing encoded data from EncodedBufferCache to onDataAvailable
-	        // handler. "mTimeSlice < 0" means Session object does not push encoded data to
-	        // onDataAvailable, instead, it passive wait the client side pull encoded data
-	        // by calling requestData API.
-	        mediaRecorder.start(1);
-
-	        // Start recording. If timeSlice has been provided, mediaRecorder will
-	        // raise a dataavailable event containing the Blob of collected data on every timeSlice milliseconds.
-	        // If timeSlice isn't provided, UA should call the RequestData to obtain the Blob data, also set the mTimeSlice to zero.
-
-	        if (config.onAudioProcessStarted) {
-	            config.onAudioProcessStarted();
-	        }
-
-	        if (config.initCallback) {
-	            config.initCallback();
-	        }
-	    };
-
-	    /**
-	     * This method stops recording MediaStream.
-	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
-	     * @method
-	     * @memberof MediaStreamRecorder
-	     * @example
-	     * recorder.stop(function(blob) {
-	     *     video.src = URL.createObjectURL(blob);
-	     * });
-	     */
-	    this.stop = function(callback) {
-	        if (!mediaRecorder) {
-	            return;
-	        }
-
-	        this.recordingCallback = callback || function() {};
-
-	        // mediaRecorder.state === 'recording' means that media recorder is associated with "session"
-	        // mediaRecorder.state === 'stopped' means that media recorder is detached from the "session" ... in this case; "session" will also be deleted.
-
-	        if (mediaRecorder.state === 'recording') {
-	            // "stop" method auto invokes "requestData"!
-	            mediaRecorder.requestData();
-	            mediaRecorder.stop();
-	        }
-
-	        if (recordedBuffers.length) {
-	            this.onRecordingFinished();
-	        }
-	    };
-
-	    this.onRecordingFinished = function() {
-	        /**
-	         * @property {Blob} blob - Recorded frames in video/webm blob.
-	         * @memberof MediaStreamRecorder
-	         * @example
-	         * recorder.stop(function() {
-	         *     var blob = recorder.blob;
-	         * });
-	         */
-	        this.blob = new Blob(recordedBuffers, {
-	            type: config.mimeType || 'video/webm'
-	        });
-
-	        this.recordingCallback();
-
-	        recordedBuffers = [];
-	    };
-
-	    /**
-	     * This method pauses the recording process.
-	     * @method
-	     * @memberof MediaStreamRecorder
-	     * @example
-	     * recorder.pause();
-	     */
-	    this.pause = function() {
-	        if (!mediaRecorder) {
-	            return;
-	        }
-
-	        if (mediaRecorder.state === 'recording') {
-	            mediaRecorder.pause();
-	        }
-	    };
-
-	    /**
-	     * This method resumes the recording process.
-	     * @method
-	     * @memberof MediaStreamRecorder
-	     * @example
-	     * recorder.resume();
-	     */
-	    this.resume = function() {
-	        if (this.dontFireOnDataAvailableEvent) {
-	            this.dontFireOnDataAvailableEvent = false;
-	            this.record();
-	            return;
-	        }
-
-	        if (!mediaRecorder) {
-	            return;
-	        }
-
-	        if (mediaRecorder.state === 'paused') {
-	            mediaRecorder.resume();
-	        }
-	    };
-
-	    /**
-	     * This method resets currently recorded data.
-	     * @method
-	     * @memberof MediaStreamRecorder
-	     * @example
-	     * recorder.clearRecordedData();
-	     */
-	    this.clearRecordedData = function() {
-	        if (!mediaRecorder) {
-	            return;
-	        }
-
-	        this.pause();
-
-	        this.dontFireOnDataAvailableEvent = true;
-	        this.stop();
-	    };
-
-	    // Reference to "MediaRecorder" object
-	    var mediaRecorder;
-
-	    function isMediaStreamActive() {
-	        if ('active' in mediaStream) {
-	            if (!mediaStream.active) {
-	                return false;
-	            }
-	        } else if ('ended' in mediaStream) { // old hack
-	            if (mediaStream.ended) {
-	                return false;
-	            }
-	        }
-	    }
-
-	    var self = this;
-
-	    // this method checks if media stream is stopped
-	    // or any track is ended.
-	    (function looper() {
-	        if (!mediaRecorder) {
-	            return;
-	        }
-
-	        if (isMediaStreamActive() === false) {
-	            self.stop();
-	            return;
-	        }
-
-	        setTimeout(looper, 1000); // check every second
-	    })();
-	}
-
-	// source code from: http://typedarray.org/wp-content/projects/WebAudioRecorder/script.js
-	// https://github.com/mattdiamond/Recorderjs#license-mit
-	// ______________________
-	// StereoAudioRecorder.js
-
-	/**
-	 * StereoAudioRecorder is a standalone class used by {@link RecordRTC} to bring "stereo" audio-recording in chrome.
-	 * @summary JavaScript standalone object for stereo audio recording.
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @typedef StereoAudioRecorder
-	 * @class
-	 * @example
-	 * var recorder = new StereoAudioRecorder(MediaStream, {
-	 *     sampleRate: 44100,
-	 *     bufferSize: 4096
-	 * });
-	 * recorder.record();
-	 * recorder.stop(function(blob) {
-	 *     video.src = URL.createObjectURL(blob);
-	 * });
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
-	 * @param {object} config - {sampleRate: 44100, bufferSize: 4096, numberOfAudioChannels: 1, etc.}
-	 */
-
-	function StereoAudioRecorder(mediaStream, config) {
-	    if (!mediaStream.getAudioTracks().length) {
-	        throw 'Your stream has no audio tracks.';
-	    }
-
-	    config = config || {};
-
-	    var self = this;
-
-	    // variables
-	    var leftchannel = [];
-	    var rightchannel = [];
-	    var recording = false;
-	    var recordingLength = 0;
-	    var jsAudioNode;
-
-	    var numberOfAudioChannels = 2;
-
-	    // backward compatibility
-	    if (config.leftChannel === true) {
-	        numberOfAudioChannels = 1;
-	    }
-
-	    if (config.numberOfAudioChannels === 1) {
-	        numberOfAudioChannels = 1;
-	    }
-
-	    if (!config.disableLogs) {
-	        console.debug('StereoAudioRecorder is set to record number of channels: ', numberOfAudioChannels);
-	    }
-
-	    function isMediaStreamActive() {
-	        if ('active' in mediaStream) {
-	            if (!mediaStream.active) {
-	                return false;
-	            }
-	        } else if ('ended' in mediaStream) { // old hack
-	            if (mediaStream.ended) {
-	                return false;
-	            }
-	        }
-	    }
-
-	    /**
-	     * This method records MediaStream.
-	     * @method
-	     * @memberof StereoAudioRecorder
-	     * @example
-	     * recorder.record();
-	     */
-	    this.record = function() {
-	        if (isMediaStreamActive() === false) {
-	            throw 'Please make sure MediaStream is active.';
-	        }
-
-	        // reset the buffers for the new recording
-	        leftchannel.length = rightchannel.length = 0;
-	        recordingLength = 0;
-
-	        if (audioInput) {
-	            audioInput.connect(jsAudioNode);
-	        }
-
-	        // to prevent self audio to be connected with speakers
-	        // jsAudioNode.connect(context.destination);
-
-	        isAudioProcessStarted = isPaused = false;
-	        recording = true;
-	    };
-
-	    function mergeLeftRightBuffers(config, callback) {
-	        function mergeAudioBuffers(config, cb) {
-	            var numberOfAudioChannels = config.numberOfAudioChannels;
-
-	            // todo: "slice(0)" --- is it causes loop? Should be removed?
-	            var leftBuffers = config.leftBuffers.slice(0);
-	            var rightBuffers = config.rightBuffers.slice(0);
-	            var sampleRate = config.sampleRate;
-	            var internalInterleavedLength = config.internalInterleavedLength;
-
-	            if (numberOfAudioChannels === 2) {
-	                leftBuffers = mergeBuffers(leftBuffers, internalInterleavedLength);
-	                rightBuffers = mergeBuffers(rightBuffers, internalInterleavedLength);
-	            }
-
-	            if (numberOfAudioChannels === 1) {
-	                leftBuffers = mergeBuffers(leftBuffers, internalInterleavedLength);
-	            }
-
-	            function mergeBuffers(channelBuffer, rLength) {
-	                var result = new Float64Array(rLength);
-	                var offset = 0;
-	                var lng = channelBuffer.length;
-
-	                for (var i = 0; i < lng; i++) {
-	                    var buffer = channelBuffer[i];
-	                    result.set(buffer, offset);
-	                    offset += buffer.length;
-	                }
-
-	                return result;
-	            }
-
-	            function interleave(leftChannel, rightChannel) {
-	                var length = leftChannel.length + rightChannel.length;
-
-	                var result = new Float64Array(length);
-
-	                var inputIndex = 0;
-
-	                for (var index = 0; index < length;) {
-	                    result[index++] = leftChannel[inputIndex];
-	                    result[index++] = rightChannel[inputIndex];
-	                    inputIndex++;
-	                }
-	                return result;
-	            }
-
-	            function writeUTFBytes(view, offset, string) {
-	                var lng = string.length;
-	                for (var i = 0; i < lng; i++) {
-	                    view.setUint8(offset + i, string.charCodeAt(i));
-	                }
-	            }
-
-	            // interleave both channels together
-	            var interleaved;
-
-	            if (numberOfAudioChannels === 2) {
-	                interleaved = interleave(leftBuffers, rightBuffers);
-	            }
-
-	            if (numberOfAudioChannels === 1) {
-	                interleaved = leftBuffers;
-	            }
-
-	            var interleavedLength = interleaved.length;
-
-	            // create wav file
-	            var resultingBufferLength = 44 + interleavedLength * 2;
-
-	            var buffer = new ArrayBuffer(resultingBufferLength);
-
-	            var view = new DataView(buffer);
-
-	            // RIFF chunk descriptor/identifier 
-	            writeUTFBytes(view, 0, 'RIFF');
-
-	            // RIFF chunk length
-	            view.setUint32(4, 44 + interleavedLength * 2, true);
-
-	            // RIFF type 
-	            writeUTFBytes(view, 8, 'WAVE');
-
-	            // format chunk identifier 
-	            // FMT sub-chunk
-	            writeUTFBytes(view, 12, 'fmt ');
-
-	            // format chunk length 
-	            view.setUint32(16, 16, true);
-
-	            // sample format (raw)
-	            view.setUint16(20, 1, true);
-
-	            // stereo (2 channels)
-	            view.setUint16(22, numberOfAudioChannels, true);
-
-	            // sample rate 
-	            view.setUint32(24, sampleRate, true);
-
-	            // byte rate (sample rate * block align)
-	            view.setUint32(28, sampleRate * 4, true);
-
-	            // block align (channel count * bytes per sample) 
-	            view.setUint16(32, numberOfAudioChannels * 2, true);
-
-	            // bits per sample 
-	            view.setUint16(34, 16, true);
-
-	            // data sub-chunk
-	            // data chunk identifier 
-	            writeUTFBytes(view, 36, 'data');
-
-	            // data chunk length 
-	            view.setUint32(40, interleavedLength * 2, true);
-
-	            // write the PCM samples
-	            var lng = interleavedLength;
-	            var index = 44;
-	            var volume = 1;
-	            for (var i = 0; i < lng; i++) {
-	                view.setInt16(index, interleaved[i] * (0x7FFF * volume), true);
-	                index += 2;
-	            }
-
-	            if (cb) {
-	                return cb({
-	                    buffer: buffer,
-	                    view: view
-	                });
-	            }
-
-	            postMessage({
-	                buffer: buffer,
-	                view: view
-	            });
-	        }
-
-	        if (!isChrome) {
-	            // its Microsoft Edge
-	            mergeAudioBuffers(config, function(data) {
-	                callback(data.buffer, data.view);
-	            });
-	            return;
-	        }
-
-
-	        var webWorker = processInWebWorker(mergeAudioBuffers);
-
-	        webWorker.onmessage = function(event) {
-	            callback(event.data.buffer, event.data.view);
-
-	            // release memory
-	            URL.revokeObjectURL(webWorker.workerURL);
-	        };
-
-	        webWorker.postMessage(config);
-	    }
-
-	    function processInWebWorker(_function) {
-	        var workerURL = URL.createObjectURL(new Blob([_function.toString(),
-	            ';this.onmessage =  function (e) {' + _function.name + '(e.data);}'
-	        ], {
-	            type: 'application/javascript'
-	        }));
-
-	        var worker = new Worker(workerURL);
-	        worker.workerURL = workerURL;
-	        return worker;
-	    }
-
-	    /**
-	     * This method stops recording MediaStream.
-	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
-	     * @method
-	     * @memberof StereoAudioRecorder
-	     * @example
-	     * recorder.stop(function(blob) {
-	     *     video.src = URL.createObjectURL(blob);
-	     * });
-	     */
-	    this.stop = function(callback) {
-	        // stop recording
-	        recording = false;
-
-	        // to make sure onaudioprocess stops firing
-	        // audioInput.disconnect();
-
-	        mergeLeftRightBuffers({
-	            sampleRate: sampleRate,
-	            numberOfAudioChannels: numberOfAudioChannels,
-	            internalInterleavedLength: recordingLength,
-	            leftBuffers: leftchannel,
-	            rightBuffers: numberOfAudioChannels === 1 ? [] : rightchannel
-	        }, function(buffer, view) {
-	            /**
-	             * @property {Blob} blob - The recorded blob object.
-	             * @memberof StereoAudioRecorder
-	             * @example
-	             * recorder.stop(function(){
-	             *     var blob = recorder.blob;
-	             * });
-	             */
-	            self.blob = new Blob([view], {
-	                type: 'audio/wav'
-	            });
-
-	            /**
-	             * @property {ArrayBuffer} buffer - The recorded buffer object.
-	             * @memberof StereoAudioRecorder
-	             * @example
-	             * recorder.stop(function(){
-	             *     var buffer = recorder.buffer;
-	             * });
-	             */
-	            self.buffer = new ArrayBuffer(view);
-
-	            /**
-	             * @property {DataView} view - The recorded data-view object.
-	             * @memberof StereoAudioRecorder
-	             * @example
-	             * recorder.stop(function(){
-	             *     var view = recorder.view;
-	             * });
-	             */
-	            self.view = view;
-
-	            self.sampleRate = sampleRate;
-	            self.bufferSize = bufferSize;
-
-	            // recorded audio length
-	            self.length = recordingLength;
-
-	            if (callback) {
-	                callback();
-	            }
-
-	            isAudioProcessStarted = false;
-	        });
-	    };
-
-	    if (!Storage.AudioContextConstructor) {
-	        Storage.AudioContextConstructor = new Storage.AudioContext();
-	    }
-
-	    var context = Storage.AudioContextConstructor;
-
-	    // creates an audio node from the microphone incoming stream
-	    var audioInput = context.createMediaStreamSource(mediaStream);
-
-	    var legalBufferValues = [0, 256, 512, 1024, 2048, 4096, 8192, 16384];
-
-	    /**
-	     * From the spec: This value controls how frequently the audioprocess event is
-	     * dispatched and how many sample-frames need to be processed each call.
-	     * Lower values for buffer size will result in a lower (better) latency.
-	     * Higher values will be necessary to avoid audio breakup and glitches
-	     * The size of the buffer (in sample-frames) which needs to
-	     * be processed each time onprocessaudio is called.
-	     * Legal values are (256, 512, 1024, 2048, 4096, 8192, 16384).
-	     * @property {number} bufferSize - Buffer-size for how frequently the audioprocess event is dispatched.
-	     * @memberof StereoAudioRecorder
-	     * @example
-	     * recorder = new StereoAudioRecorder(mediaStream, {
-	     *     bufferSize: 4096
-	     * });
-	     */
-
-	    // "0" means, let chrome decide the most accurate buffer-size for current platform.
-	    var bufferSize = typeof config.bufferSize === 'undefined' ? 4096 : config.bufferSize;
-
-	    if (legalBufferValues.indexOf(bufferSize) === -1) {
-	        if (!config.disableLogs) {
-	            console.warn('Legal values for buffer-size are ' + JSON.stringify(legalBufferValues, null, '\t'));
-	        }
-	    }
-
-	    if (context.createJavaScriptNode) {
-	        jsAudioNode = context.createJavaScriptNode(bufferSize, numberOfAudioChannels, numberOfAudioChannels);
-	    } else if (context.createScriptProcessor) {
-	        jsAudioNode = context.createScriptProcessor(bufferSize, numberOfAudioChannels, numberOfAudioChannels);
-	    } else {
-	        throw 'WebAudio API has no support on this browser.';
-	    }
-
-	    // connect the stream to the gain node
-	    audioInput.connect(jsAudioNode);
-
-	    if (!config.bufferSize) {
-	        bufferSize = jsAudioNode.bufferSize; // device buffer-size
-	    }
-
-	    /**
-	     * The sample rate (in sample-frames per second) at which the
-	     * AudioContext handles audio. It is assumed that all AudioNodes
-	     * in the context run at this rate. In making this assumption,
-	     * sample-rate converters or "varispeed" processors are not supported
-	     * in real-time processing.
-	     * The sampleRate parameter describes the sample-rate of the
-	     * linear PCM audio data in the buffer in sample-frames per second.
-	     * An implementation must support sample-rates in at least
-	     * the range 22050 to 96000.
-	     * @property {number} sampleRate - Buffer-size for how frequently the audioprocess event is dispatched.
-	     * @memberof StereoAudioRecorder
-	     * @example
-	     * recorder = new StereoAudioRecorder(mediaStream, {
-	     *     sampleRate: 44100
-	     * });
-	     */
-	    var sampleRate = typeof config.sampleRate !== 'undefined' ? config.sampleRate : context.sampleRate || 44100;
-
-	    if (sampleRate < 22050 || sampleRate > 96000) {
-	        // Ref: http://stackoverflow.com/a/26303918/552182
-	        if (!config.disableLogs) {
-	            console.warn('sample-rate must be under range 22050 and 96000.');
-	        }
-	    }
-
-	    if (!config.disableLogs) {
-	        console.log('sample-rate', sampleRate);
-	        console.log('buffer-size', bufferSize);
-	    }
-
-	    var isPaused = false;
-	    /**
-	     * This method pauses the recording process.
-	     * @method
-	     * @memberof StereoAudioRecorder
-	     * @example
-	     * recorder.pause();
-	     */
-	    this.pause = function() {
-	        isPaused = true;
-	    };
-
-	    /**
-	     * This method resumes the recording process.
-	     * @method
-	     * @memberof StereoAudioRecorder
-	     * @example
-	     * recorder.resume();
-	     */
-	    this.resume = function() {
-	        if (isMediaStreamActive() === false) {
-	            throw 'Please make sure MediaStream is active.';
-	        }
-
-	        if (!recording) {
-	            if (!config.disableLogs) {
-	                console.info('Seems recording has been restarted.');
-	            }
-	            this.record();
-	            return;
-	        }
-
-	        isPaused = false;
-	    };
-
-	    /**
-	     * This method resets currently recorded data.
-	     * @method
-	     * @memberof StereoAudioRecorder
-	     * @example
-	     * recorder.clearRecordedData();
-	     */
-	    this.clearRecordedData = function() {
-	        this.pause();
-
-	        leftchannel.length = rightchannel.length = 0;
-	        recordingLength = 0;
-	    };
-
-	    var isAudioProcessStarted = false;
-
-	    function onAudioProcessDataAvailable(e) {
-	        if (isPaused) {
-	            return;
-	        }
-
-	        if (isMediaStreamActive() === false) {
-	            if (!config.disableLogs) {
-	                console.error('MediaStream seems stopped.');
-	            }
-	            jsAudioNode.disconnect();
-	            recording = false;
-	        }
-
-	        if (!recording) {
-	            audioInput.disconnect();
-	            return;
-	        }
-
-	        /**
-	         * This method is called on "onaudioprocess" event's first invocation.
-	         * @method {function} onAudioProcessStarted
-	         * @memberof StereoAudioRecorder
-	         * @example
-	         * recorder.onAudioProcessStarted: function() { };
-	         */
-	        if (!isAudioProcessStarted) {
-	            isAudioProcessStarted = true;
-	            if (config.onAudioProcessStarted) {
-	                config.onAudioProcessStarted();
-	            }
-
-	            if (config.initCallback) {
-	                config.initCallback();
-	            }
-	        }
-
-	        var left = e.inputBuffer.getChannelData(0);
-
-	        // we clone the samples
-	        leftchannel.push(new Float32Array(left));
-
-	        if (numberOfAudioChannels === 2) {
-	            var right = e.inputBuffer.getChannelData(1);
-	            rightchannel.push(new Float32Array(right));
-	        }
-
-	        recordingLength += bufferSize;
-	    }
-
-	    jsAudioNode.onaudioprocess = onAudioProcessDataAvailable;
-
-	    // to prevent self audio to be connected with speakers
-	    jsAudioNode.connect(context.destination);
-	}
-
-	// _________________
-	// CanvasRecorder.js
-
-	/**
-	 * CanvasRecorder is a standalone class used by {@link RecordRTC} to bring HTML5-Canvas recording into video WebM. It uses HTML2Canvas library and runs top over {@link Whammy}.
-	 * @summary HTML2Canvas recording into video WebM.
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @typedef CanvasRecorder
-	 * @class
-	 * @example
-	 * var recorder = new CanvasRecorder(htmlElement, { disableLogs: true });
-	 * recorder.record();
-	 * recorder.stop(function(blob) {
-	 *     video.src = URL.createObjectURL(blob);
-	 * });
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 * @param {HTMLElement} htmlElement - querySelector/getElementById/getElementsByTagName[0]/etc.
-	 * @param {object} config - {disableLogs:true, initCallback: function}
-	 */
-
-	function CanvasRecorder(htmlElement, config) {
-	    if (typeof html2canvas === 'undefined') {
-	        throw 'Please link: //cdn.webrtc-experiment.com/screenshot.js';
-	    }
-
-	    config = config || {};
-
-	    // via DetectRTC.js
-	    var isCanvasSupportsStreamCapturing = false;
-	    ['captureStream', 'mozCaptureStream', 'webkitCaptureStream'].forEach(function(item) {
-	        if (item in document.createElement('canvas')) {
-	            isCanvasSupportsStreamCapturing = true;
-	        }
-	    });
-
-	    var globalCanvas, globalContext, mediaStreamRecorder;
-
-	    if (isCanvasSupportsStreamCapturing) {
-	        if (!config.disableLogs) {
-	            console.debug('Your browser supports both MediRecorder API and canvas.captureStream!');
-	        }
-
-	        globalCanvas = document.createElement('canvas');
-
-	        globalCanvas.width = htmlElement.clientWidth || window.innerWidth;
-	        globalCanvas.height = htmlElement.clientHeight || window.innerHeight;
-
-	        globalCanvas.style = 'top: -9999999; left: -99999999; visibility:hidden; position:absoluted; display: none;';
-	        (document.body || document.documentElement).appendChild(globalCanvas);
-
-	        globalContext = globalCanvas.getContext('2d');
-	    } else if (!!navigator.mozGetUserMedia) {
-	        if (!config.disableLogs) {
-	            alert('Canvas recording is NOT supported in Firefox.');
-	        }
-	    }
-
-	    var isRecording;
-
-	    /**
-	     * This method records Canvas.
-	     * @method
-	     * @memberof CanvasRecorder
-	     * @example
-	     * recorder.record();
-	     */
-	    this.record = function() {
-	        if (isCanvasSupportsStreamCapturing) {
-	            // CanvasCaptureMediaStream
-	            var canvasMediaStream;
-	            if ('captureStream' in globalCanvas) {
-	                canvasMediaStream = globalCanvas.captureStream(25); // 25 FPS
-	            } else if ('mozCaptureStream' in globalCanvas) {
-	                canvasMediaStream = globalCanvas.captureStream(25);
-	            } else if ('webkitCaptureStream' in globalCanvas) {
-	                canvasMediaStream = globalCanvas.captureStream(25);
-	            }
-
-	            if (!canvasMediaStream) {
-	                throw 'captureStream API are NOT available.';
-	            }
-
-	            // Note: Sep, 2015 status is that, MediaRecorder API can't record CanvasCaptureMediaStream object.
-	            mediaStreamRecorder = new MediaStreamRecorder(canvasMediaStream, {
-	                mimeType: 'video/webm'
-	            });
-	            mediaStreamRecorder.record();
-	        }
-
-	        isRecording = true;
-	        whammy.frames = [];
-	        drawCanvasFrame();
-
-	        if (config.initCallback) {
-	            config.initCallback();
-	        }
-	    };
-
-	    /**
-	     * This method stops recording Canvas.
-	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
-	     * @method
-	     * @memberof CanvasRecorder
-	     * @example
-	     * recorder.stop(function(blob) {
-	     *     video.src = URL.createObjectURL(blob);
-	     * });
-	     */
-	    this.stop = function(callback) {
-	        isRecording = false;
-
-	        if (isCanvasSupportsStreamCapturing && mediaStreamRecorder) {
-	            var slef = this;
-	            mediaStreamRecorder.stop(function() {
-	                for (var prop in mediaStreamRecorder) {
-	                    self[prop] = mediaStreamRecorder[prop];
-	                }
-	                if (callback) {
-	                    callback(that.blob);
-	                }
-	            });
-	            return;
-	        }
-
-	        var that = this;
-
-	        /**
-	         * @property {Blob} blob - Recorded frames in video/webm blob.
-	         * @memberof CanvasRecorder
-	         * @example
-	         * recorder.stop(function() {
-	         *     var blob = recorder.blob;
-	         * });
-	         */
-	        whammy.compile(function(blob) {
-	            that.blob = blob;
-
-	            if (that.blob.forEach) {
-	                that.blob = new Blob([], {
-	                    type: 'video/webm'
-	                });
-	            }
-
-	            if (callback) {
-	                callback(that.blob);
-	            }
-
-	            whammy.frames = [];
-	        });
-	    };
-
-	    var isPausedRecording = false;
-
-	    /**
-	     * This method pauses the recording process.
-	     * @method
-	     * @memberof CanvasRecorder
-	     * @example
-	     * recorder.pause();
-	     */
-	    this.pause = function() {
-	        isPausedRecording = true;
-	    };
-
-	    /**
-	     * This method resumes the recording process.
-	     * @method
-	     * @memberof CanvasRecorder
-	     * @example
-	     * recorder.resume();
-	     */
-	    this.resume = function() {
-	        isPausedRecording = false;
-	    };
-
-	    /**
-	     * This method resets currently recorded data.
-	     * @method
-	     * @memberof CanvasRecorder
-	     * @example
-	     * recorder.clearRecordedData();
-	     */
-	    this.clearRecordedData = function() {
-	        this.pause();
-	        whammy.frames = [];
-	    };
-
-	    function drawCanvasFrame() {
-	        if (isPausedRecording) {
-	            lastTime = new Date().getTime();
-	            return setTimeout(drawCanvasFrame, 100);
-	        }
-
-	        html2canvas(htmlElement, {
-	            onrendered: function(canvas) {
-	                if (isCanvasSupportsStreamCapturing) {
-	                    var image = document.createElement('img');
-	                    image.src = canvas.toDataURL('image/png');
-	                    image.onload = function() {
-	                        globalContext.drawImage(image, 0, 0, image.clientWidth, image.clientHeight);
-	                        (document.body || document.documentElement).removeChild(image);
-	                    };
-	                    image.style.opacity = 0;
-	                    (document.body || document.documentElement).appendChild(image);
-	                } else {
-	                    var duration = new Date().getTime() - lastTime;
-	                    if (!duration) {
-	                        return drawCanvasFrame();
-	                    }
-
-	                    // via #206, by Jack i.e. @Seymourr
-	                    lastTime = new Date().getTime();
-
-	                    whammy.frames.push({
-	                        duration: duration,
-	                        image: canvas.toDataURL('image/webp')
-	                    });
-	                }
-
-	                if (isRecording) {
-	                    setTimeout(drawCanvasFrame, 0);
-	                }
-	            }
-	        });
-	    }
-
-	    var lastTime = new Date().getTime();
-
-	    var whammy = new Whammy.Video(100);
-	}
-
-	// _________________
-	// WhammyRecorder.js
-
-	/**
-	 * WhammyRecorder is a standalone class used by {@link RecordRTC} to bring video recording in Chrome. It runs top over {@link Whammy}.
-	 * @summary Video recording feature in Chrome.
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @typedef WhammyRecorder
-	 * @class
-	 * @example
-	 * var recorder = new WhammyRecorder(mediaStream);
-	 * recorder.record();
-	 * recorder.stop(function(blob) {
-	 *     video.src = URL.createObjectURL(blob);
-	 * });
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 * @param {MediaStream} mediaStream - MediaStream object fetched using getUserMedia API or generated using captureStreamUntilEnded or WebAudio API.
-	 * @param {object} config - {disableLogs: true, initCallback: function, video: HTMLVideoElement, etc.}
-	 */
-
-	function WhammyRecorder(mediaStream, config) {
-
-	    config = config || {};
-
-	    if (!config.frameInterval) {
-	        config.frameInterval = 10;
-	    }
-
-	    if (!config.disableLogs) {
-	        console.log('Using frames-interval:', config.frameInterval);
-	    }
-
-	    /**
-	     * This method records video.
-	     * @method
-	     * @memberof WhammyRecorder
-	     * @example
-	     * recorder.record();
-	     */
-	    this.record = function() {
-	        if (!config.width) {
-	            config.width = 320;
-	        }
-
-	        if (!config.height) {
-	            config.height = 240;
-	        }
-
-	        if (!config.video) {
-	            config.video = {
-	                width: config.width,
-	                height: config.height
-	            };
-	        }
-
-	        if (!config.canvas) {
-	            config.canvas = {
-	                width: config.width,
-	                height: config.height
-	            };
-	        }
-
-	        canvas.width = config.canvas.width;
-	        canvas.height = config.canvas.height;
-
-	        context = canvas.getContext('2d');
-
-	        // setting defaults
-	        if (config.video && config.video instanceof HTMLVideoElement) {
-	            video = config.video.cloneNode();
-
-	            if (config.initCallback) {
-	                config.initCallback();
-	            }
-	        } else {
-	            video = document.createElement('video');
-
-	            if (typeof video.srcObject !== 'undefined') {
-	                video.srcObject = mediaStream;
-	            } else {
-	                video.src = URL.createObjectURL(mediaStream);
-	            }
-
-	            video.onloadedmetadata = function() { // "onloadedmetadata" may NOT work in FF?
-	                if (config.initCallback) {
-	                    config.initCallback();
-	                }
-	            };
-
-	            video.width = config.video.width;
-	            video.height = config.video.height;
-	        }
-
-	        video.muted = true;
-	        video.play();
-
-	        lastTime = new Date().getTime();
-	        whammy = new Whammy.Video();
-
-	        if (!config.disableLogs) {
-	            console.log('canvas resolutions', canvas.width, '*', canvas.height);
-	            console.log('video width/height', video.width || canvas.width, '*', video.height || canvas.height);
-	        }
-
-	        drawFrames(config.frameInterval);
-	    };
-
-	    /**
-	     * Draw and push frames to Whammy
-	     * @param {integer} frameInterval - set minimum interval (in milliseconds) between each time we push a frame to Whammy
-	     */
-	    function drawFrames(frameInterval) {
-	        frameInterval = typeof frameInterval !== 'undefined' ? frameInterval : 10;
-
-	        var duration = new Date().getTime() - lastTime;
-	        if (!duration) {
-	            return setTimeout(drawFrames, frameInterval, frameInterval);
-	        }
-
-	        if (isPausedRecording) {
-	            lastTime = new Date().getTime();
-	            return setTimeout(drawFrames, 100);
-	        }
-
-	        // via #206, by Jack i.e. @Seymourr
-	        lastTime = new Date().getTime();
-
-	        if (video.paused) {
-	            // via: https://github.com/muaz-khan/WebRTC-Experiment/pull/316
-	            // Tweak for Android Chrome
-	            video.play();
-	        }
-
-	        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-	        whammy.frames.push({
-	            duration: duration,
-	            image: canvas.toDataURL('image/webp')
-	        });
-
-	        if (!isStopDrawing) {
-	            setTimeout(drawFrames, frameInterval, frameInterval);
-	        }
-	    }
-
-	    function asyncLoop(o) {
-	        var i = -1,
-	            length = o.length;
-
-	        var loop = function() {
-	            i++;
-	            if (i === length) {
-	                o.callback();
-	                return;
-	            }
-	            o.functionToLoop(loop, i);
-	        };
-	        loop(); //init
-	    }
-
-
-	    /**
-	     * remove black frames from the beginning to the specified frame
-	     * @param {Array} _frames - array of frames to be checked
-	     * @param {number} _framesToCheck - number of frame until check will be executed (-1 - will drop all frames until frame not matched will be found)
-	     * @param {number} _pixTolerance - 0 - very strict (only black pixel color) ; 1 - all
-	     * @param {number} _frameTolerance - 0 - very strict (only black frame color) ; 1 - all
-	     * @returns {Array} - array of frames
-	     */
-	    // pull#293 by @volodalexey
-	    function dropBlackFrames(_frames, _framesToCheck, _pixTolerance, _frameTolerance, callback) {
-	        var localCanvas = document.createElement('canvas');
-	        localCanvas.width = canvas.width;
-	        localCanvas.height = canvas.height;
-	        var context2d = localCanvas.getContext('2d');
-	        var resultFrames = [];
-
-	        var checkUntilNotBlack = _framesToCheck === -1;
-	        var endCheckFrame = (_framesToCheck && _framesToCheck > 0 && _framesToCheck <= _frames.length) ?
-	            _framesToCheck : _frames.length;
-	        var sampleColor = {
-	            r: 0,
-	            g: 0,
-	            b: 0
-	        };
-	        var maxColorDifference = Math.sqrt(
-	            Math.pow(255, 2) +
-	            Math.pow(255, 2) +
-	            Math.pow(255, 2)
-	        );
-	        var pixTolerance = _pixTolerance && _pixTolerance >= 0 && _pixTolerance <= 1 ? _pixTolerance : 0;
-	        var frameTolerance = _frameTolerance && _frameTolerance >= 0 && _frameTolerance <= 1 ? _frameTolerance : 0;
-	        var doNotCheckNext = false;
-
-	        asyncLoop({
-	            length: endCheckFrame,
-	            functionToLoop: function(loop, f) {
-	                var matchPixCount, endPixCheck, maxPixCount;
-
-	                var finishImage = function() {
-	                    if (!doNotCheckNext && maxPixCount - matchPixCount <= maxPixCount * frameTolerance) {
-	                        // console.log('removed black frame : ' + f + ' ; frame duration ' + _frames[f].duration);
-	                    } else {
-	                        // console.log('frame is passed : ' + f);
-	                        if (checkUntilNotBlack) {
-	                            doNotCheckNext = true;
-	                        }
-	                        resultFrames.push(_frames[f]);
-	                    }
-	                    loop();
-	                };
-
-	                if (!doNotCheckNext) {
-	                    var image = new Image();
-	                    image.onload = function() {
-	                        context2d.drawImage(image, 0, 0, canvas.width, canvas.height);
-	                        var imageData = context2d.getImageData(0, 0, canvas.width, canvas.height);
-	                        matchPixCount = 0;
-	                        endPixCheck = imageData.data.length;
-	                        maxPixCount = imageData.data.length / 4;
-
-	                        for (var pix = 0; pix < endPixCheck; pix += 4) {
-	                            var currentColor = {
-	                                r: imageData.data[pix],
-	                                g: imageData.data[pix + 1],
-	                                b: imageData.data[pix + 2]
-	                            };
-	                            var colorDifference = Math.sqrt(
-	                                Math.pow(currentColor.r - sampleColor.r, 2) +
-	                                Math.pow(currentColor.g - sampleColor.g, 2) +
-	                                Math.pow(currentColor.b - sampleColor.b, 2)
-	                            );
-	                            // difference in color it is difference in color vectors (r1,g1,b1) <=> (r2,g2,b2)
-	                            if (colorDifference <= maxColorDifference * pixTolerance) {
-	                                matchPixCount++;
-	                            }
-	                        }
-	                        finishImage();
-	                    };
-	                    image.src = _frames[f].image;
-	                } else {
-	                    finishImage();
-	                }
-	            },
-	            callback: function() {
-	                resultFrames = resultFrames.concat(_frames.slice(endCheckFrame));
-
-	                if (resultFrames.length <= 0) {
-	                    // at least one last frame should be available for next manipulation
-	                    // if total duration of all frames will be < 1000 than ffmpeg doesn't work well...
-	                    resultFrames.push(_frames[_frames.length - 1]);
-	                }
-	                callback(resultFrames);
-	            }
-	        });
-	    }
-
-	    var isStopDrawing = false;
-
-	    /**
-	     * This method stops recording video.
-	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
-	     * @method
-	     * @memberof WhammyRecorder
-	     * @example
-	     * recorder.stop(function(blob) {
-	     *     video.src = URL.createObjectURL(blob);
-	     * });
-	     */
-	    this.stop = function(callback) {
-	        isStopDrawing = true;
-
-	        var _this = this;
-	        // analyse of all frames takes some time!
-	        setTimeout(function() {
-	            // e.g. dropBlackFrames(frames, 10, 1, 1) - will cut all 10 frames
-	            // e.g. dropBlackFrames(frames, 10, 0.5, 0.5) - will analyse 10 frames
-	            // e.g. dropBlackFrames(frames, 10) === dropBlackFrames(frames, 10, 0, 0) - will analyse 10 frames with strict black color
-	            dropBlackFrames(whammy.frames, -1, null, null, function(frames) {
-	                whammy.frames = frames;
-
-	                // to display advertisement images!
-	                if (config.advertisement && config.advertisement.length) {
-	                    whammy.frames = config.advertisement.concat(whammy.frames);
-	                }
-
-	                /**
-	                 * @property {Blob} blob - Recorded frames in video/webm blob.
-	                 * @memberof WhammyRecorder
-	                 * @example
-	                 * recorder.stop(function() {
-	                 *     var blob = recorder.blob;
-	                 * });
-	                 */
-	                whammy.compile(function(blob) {
-	                    _this.blob = blob;
-
-	                    if (_this.blob.forEach) {
-	                        _this.blob = new Blob([], {
-	                            type: 'video/webm'
-	                        });
-	                    }
-
-	                    if (callback) {
-	                        callback(_this.blob);
-	                    }
-	                });
-	            });
-	        }, 10);
-	    };
-
-	    var isPausedRecording = false;
-
-	    /**
-	     * This method pauses the recording process.
-	     * @method
-	     * @memberof WhammyRecorder
-	     * @example
-	     * recorder.pause();
-	     */
-	    this.pause = function() {
-	        isPausedRecording = true;
-	    };
-
-	    /**
-	     * This method resumes the recording process.
-	     * @method
-	     * @memberof WhammyRecorder
-	     * @example
-	     * recorder.resume();
-	     */
-	    this.resume = function() {
-	        isPausedRecording = false;
-	    };
-
-	    /**
-	     * This method resets currently recorded data.
-	     * @method
-	     * @memberof WhammyRecorder
-	     * @example
-	     * recorder.clearRecordedData();
-	     */
-	    this.clearRecordedData = function() {
-	        this.pause();
-	        whammy.frames = [];
-	    };
-
-	    var canvas = document.createElement('canvas');
-	    var context = canvas.getContext('2d');
-
-	    var video;
-	    var lastTime;
-	    var whammy;
-	}
-
-	// https://github.com/antimatter15/whammy/blob/master/LICENSE
-	// _________
-	// Whammy.js
-
-	// todo: Firefox now supports webp for webm containers!
-	// their MediaRecorder implementation works well!
-	// should we provide an option to record via Whammy.js or MediaRecorder API is a better solution?
-
-	/**
-	 * Whammy is a standalone class used by {@link RecordRTC} to bring video recording in Chrome. It is written by {@link https://github.com/antimatter15|antimatter15}
-	 * @summary A real time javascript webm encoder based on a canvas hack.
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @typedef Whammy
-	 * @class
-	 * @example
-	 * var recorder = new Whammy().Video(15);
-	 * recorder.add(context || canvas || dataURL);
-	 * var output = recorder.compile();
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 */
-
-	var Whammy = (function() {
-	    // a more abstract-ish API
-
-	    function WhammyVideo(duration) {
-	        this.frames = [];
-	        this.duration = duration || 1;
-	        this.quality = 0.8;
-	    }
-
-	    /**
-	     * Pass Canvas or Context or image/webp(string) to {@link Whammy} encoder.
-	     * @method
-	     * @memberof Whammy
-	     * @example
-	     * recorder = new Whammy().Video(0.8, 100);
-	     * recorder.add(canvas || context || 'image/webp');
-	     * @param {string} frame - Canvas || Context || image/webp
-	     * @param {number} duration - Stick a duration (in milliseconds)
-	     */
-	    WhammyVideo.prototype.add = function(frame, duration) {
-	        if ('canvas' in frame) { //CanvasRenderingContext2D
-	            frame = frame.canvas;
-	        }
-
-	        if ('toDataURL' in frame) {
-	            frame = frame.toDataURL('image/webp', this.quality);
-	        }
-
-	        if (!(/^data:image\/webp;base64,/ig).test(frame)) {
-	            throw 'Input must be formatted properly as a base64 encoded DataURI of type image/webp';
-	        }
-	        this.frames.push({
-	            image: frame,
-	            duration: duration || this.duration
-	        });
-	    };
-
-	    function processInWebWorker(_function) {
-	        var blob = URL.createObjectURL(new Blob([_function.toString(),
-	            'this.onmessage =  function (e) {' + _function.name + '(e.data);}'
-	        ], {
-	            type: 'application/javascript'
-	        }));
-
-	        var worker = new Worker(blob);
-	        URL.revokeObjectURL(blob);
-	        return worker;
-	    }
-
-	    function whammyInWebWorker(frames) {
-	        function ArrayToWebM(frames) {
-	            var info = checkFrames(frames);
-	            if (!info) {
-	                return [];
-	            }
-
-	            var clusterMaxDuration = 30000;
-
-	            var EBML = [{
-	                'id': 0x1a45dfa3, // EBML
-	                'data': [{
-	                    'data': 1,
-	                    'id': 0x4286 // EBMLVersion
-	                }, {
-	                    'data': 1,
-	                    'id': 0x42f7 // EBMLReadVersion
-	                }, {
-	                    'data': 4,
-	                    'id': 0x42f2 // EBMLMaxIDLength
-	                }, {
-	                    'data': 8,
-	                    'id': 0x42f3 // EBMLMaxSizeLength
-	                }, {
-	                    'data': 'webm',
-	                    'id': 0x4282 // DocType
-	                }, {
-	                    'data': 2,
-	                    'id': 0x4287 // DocTypeVersion
-	                }, {
-	                    'data': 2,
-	                    'id': 0x4285 // DocTypeReadVersion
-	                }]
-	            }, {
-	                'id': 0x18538067, // Segment
-	                'data': [{
-	                    'id': 0x1549a966, // Info
-	                    'data': [{
-	                        'data': 1e6, //do things in millisecs (num of nanosecs for duration scale)
-	                        'id': 0x2ad7b1 // TimecodeScale
-	                    }, {
-	                        'data': 'whammy',
-	                        'id': 0x4d80 // MuxingApp
-	                    }, {
-	                        'data': 'whammy',
-	                        'id': 0x5741 // WritingApp
-	                    }, {
-	                        'data': doubleToString(info.duration),
-	                        'id': 0x4489 // Duration
-	                    }]
-	                }, {
-	                    'id': 0x1654ae6b, // Tracks
-	                    'data': [{
-	                        'id': 0xae, // TrackEntry
-	                        'data': [{
-	                            'data': 1,
-	                            'id': 0xd7 // TrackNumber
-	                        }, {
-	                            'data': 1,
-	                            'id': 0x73c5 // TrackUID
-	                        }, {
-	                            'data': 0,
-	                            'id': 0x9c // FlagLacing
-	                        }, {
-	                            'data': 'und',
-	                            'id': 0x22b59c // Language
-	                        }, {
-	                            'data': 'V_VP8',
-	                            'id': 0x86 // CodecID
-	                        }, {
-	                            'data': 'VP8',
-	                            'id': 0x258688 // CodecName
-	                        }, {
-	                            'data': 1,
-	                            'id': 0x83 // TrackType
-	                        }, {
-	                            'id': 0xe0, // Video
-	                            'data': [{
-	                                'data': info.width,
-	                                'id': 0xb0 // PixelWidth
-	                            }, {
-	                                'data': info.height,
-	                                'id': 0xba // PixelHeight
-	                            }]
-	                        }]
-	                    }]
-	                }]
-	            }];
-
-	            //Generate clusters (max duration)
-	            var frameNumber = 0;
-	            var clusterTimecode = 0;
-	            while (frameNumber < frames.length) {
-
-	                var clusterFrames = [];
-	                var clusterDuration = 0;
-	                do {
-	                    clusterFrames.push(frames[frameNumber]);
-	                    clusterDuration += frames[frameNumber].duration;
-	                    frameNumber++;
-	                } while (frameNumber < frames.length && clusterDuration < clusterMaxDuration);
-
-	                var clusterCounter = 0;
-	                var cluster = {
-	                    'id': 0x1f43b675, // Cluster
-	                    'data': getClusterData(clusterTimecode, clusterCounter, clusterFrames)
-	                }; //Add cluster to segment
-	                EBML[1].data.push(cluster);
-	                clusterTimecode += clusterDuration;
-	            }
-
-	            return generateEBML(EBML);
-	        }
-
-	        function getClusterData(clusterTimecode, clusterCounter, clusterFrames) {
-	            return [{
-	                'data': clusterTimecode,
-	                'id': 0xe7 // Timecode
-	            }].concat(clusterFrames.map(function(webp) {
-	                var block = makeSimpleBlock({
-	                    discardable: 0,
-	                    frame: webp.data.slice(4),
-	                    invisible: 0,
-	                    keyframe: 1,
-	                    lacing: 0,
-	                    trackNum: 1,
-	                    timecode: Math.round(clusterCounter)
-	                });
-	                clusterCounter += webp.duration;
-	                return {
-	                    data: block,
-	                    id: 0xa3
-	                };
-	            }));
-	        }
-
-	        // sums the lengths of all the frames and gets the duration
-
-	        function checkFrames(frames) {
-	            if (!frames[0]) {
-	                postMessage({
-	                    error: 'Something went wrong. Maybe WebP format is not supported in the current browser.'
-	                });
-	                return;
-	            }
-
-	            var width = frames[0].width,
-	                height = frames[0].height,
-	                duration = frames[0].duration;
-
-	            for (var i = 1; i < frames.length; i++) {
-	                duration += frames[i].duration;
-	            }
-	            return {
-	                duration: duration,
-	                width: width,
-	                height: height
-	            };
-	        }
-
-	        function numToBuffer(num) {
-	            var parts = [];
-	            while (num > 0) {
-	                parts.push(num & 0xff);
-	                num = num >> 8;
-	            }
-	            return new Uint8Array(parts.reverse());
-	        }
-
-	        function strToBuffer(str) {
-	            return new Uint8Array(str.split('').map(function(e) {
-	                return e.charCodeAt(0);
-	            }));
-	        }
-
-	        function bitsToBuffer(bits) {
-	            var data = [];
-	            var pad = (bits.length % 8) ? (new Array(1 + 8 - (bits.length % 8))).join('0') : '';
-	            bits = pad + bits;
-	            for (var i = 0; i < bits.length; i += 8) {
-	                data.push(parseInt(bits.substr(i, 8), 2));
-	            }
-	            return new Uint8Array(data);
-	        }
-
-	        function generateEBML(json) {
-	            var ebml = [];
-	            for (var i = 0; i < json.length; i++) {
-	                var data = json[i].data;
-
-	                if (typeof data === 'object') {
-	                    data = generateEBML(data);
-	                }
-
-	                if (typeof data === 'number') {
-	                    data = bitsToBuffer(data.toString(2));
-	                }
-
-	                if (typeof data === 'string') {
-	                    data = strToBuffer(data);
-	                }
-
-	                var len = data.size || data.byteLength || data.length;
-	                var zeroes = Math.ceil(Math.ceil(Math.log(len) / Math.log(2)) / 8);
-	                var sizeToString = len.toString(2);
-	                var padded = (new Array((zeroes * 7 + 7 + 1) - sizeToString.length)).join('0') + sizeToString;
-	                var size = (new Array(zeroes)).join('0') + '1' + padded;
-
-	                ebml.push(numToBuffer(json[i].id));
-	                ebml.push(bitsToBuffer(size));
-	                ebml.push(data);
-	            }
-
-	            return new Blob(ebml, {
-	                type: 'video/webm'
-	            });
-	        }
-
-	        function toBinStrOld(bits) {
-	            var data = '';
-	            var pad = (bits.length % 8) ? (new Array(1 + 8 - (bits.length % 8))).join('0') : '';
-	            bits = pad + bits;
-	            for (var i = 0; i < bits.length; i += 8) {
-	                data += String.fromCharCode(parseInt(bits.substr(i, 8), 2));
-	            }
-	            return data;
-	        }
-
-	        function makeSimpleBlock(data) {
-	            var flags = 0;
-
-	            if (data.keyframe) {
-	                flags |= 128;
-	            }
-
-	            if (data.invisible) {
-	                flags |= 8;
-	            }
-
-	            if (data.lacing) {
-	                flags |= (data.lacing << 1);
-	            }
-
-	            if (data.discardable) {
-	                flags |= 1;
-	            }
-
-	            if (data.trackNum > 127) {
-	                throw 'TrackNumber > 127 not supported';
-	            }
-
-	            var out = [data.trackNum | 0x80, data.timecode >> 8, data.timecode & 0xff, flags].map(function(e) {
-	                return String.fromCharCode(e);
-	            }).join('') + data.frame;
-
-	            return out;
-	        }
-
-	        function parseWebP(riff) {
-	            var VP8 = riff.RIFF[0].WEBP[0];
-
-	            var frameStart = VP8.indexOf('\x9d\x01\x2a'); // A VP8 keyframe starts with the 0x9d012a header
-	            for (var i = 0, c = []; i < 4; i++) {
-	                c[i] = VP8.charCodeAt(frameStart + 3 + i);
-	            }
-
-	            var width, height, tmp;
-
-	            //the code below is literally copied verbatim from the bitstream spec
-	            tmp = (c[1] << 8) | c[0];
-	            width = tmp & 0x3FFF;
-	            tmp = (c[3] << 8) | c[2];
-	            height = tmp & 0x3FFF;
-	            return {
-	                width: width,
-	                height: height,
-	                data: VP8,
-	                riff: riff
-	            };
-	        }
-
-	        function getStrLength(string, offset) {
-	            return parseInt(string.substr(offset + 4, 4).split('').map(function(i) {
-	                var unpadded = i.charCodeAt(0).toString(2);
-	                return (new Array(8 - unpadded.length + 1)).join('0') + unpadded;
-	            }).join(''), 2);
-	        }
-
-	        function parseRIFF(string) {
-	            var offset = 0;
-	            var chunks = {};
-
-	            while (offset < string.length) {
-	                var id = string.substr(offset, 4);
-	                var len = getStrLength(string, offset);
-	                var data = string.substr(offset + 4 + 4, len);
-	                offset += 4 + 4 + len;
-	                chunks[id] = chunks[id] || [];
-
-	                if (id === 'RIFF' || id === 'LIST') {
-	                    chunks[id].push(parseRIFF(data));
-	                } else {
-	                    chunks[id].push(data);
-	                }
-	            }
-	            return chunks;
-	        }
-
-	        function doubleToString(num) {
-	            return [].slice.call(
-	                new Uint8Array((new Float64Array([num])).buffer), 0).map(function(e) {
-	                return String.fromCharCode(e);
-	            }).reverse().join('');
-	        }
-
-	        var webm = new ArrayToWebM(frames.map(function(frame) {
-	            var webp = parseWebP(parseRIFF(atob(frame.image.slice(23))));
-	            webp.duration = frame.duration;
-	            return webp;
-	        }));
-
-	        if (!!navigator.mozGetUserMedia) {
-	            return webm;
-	        }
-
-	        postMessage(webm);
-	    }
-
-	    /**
-	     * Encodes frames in WebM container. It uses WebWorkinvoke to invoke 'ArrayToWebM' method.
-	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
-	     * @method
-	     * @memberof Whammy
-	     * @example
-	     * recorder = new Whammy().Video(0.8, 100);
-	     * recorder.compile(function(blob) {
-	     *    // blob.size - blob.type
-	     * });
-	     */
-	    WhammyVideo.prototype.compile = function(callback) {
-	        if (!!navigator.mozGetUserMedia) {
-	            callback(whammyInWebWorker(this.frames));
-	            return;
-	        }
-	        var webWorker = processInWebWorker(whammyInWebWorker);
-
-	        webWorker.onmessage = function(event) {
-	            if (event.data.error) {
-	                console.error(event.data.error);
-	                return;
-	            }
-	            callback(event.data);
-	        };
-
-	        webWorker.postMessage(this.frames);
-	    };
-
-	    return {
-	        /**
-	         * A more abstract-ish API.
-	         * @method
-	         * @memberof Whammy
-	         * @example
-	         * recorder = new Whammy().Video(0.8, 100);
-	         * @param {?number} speed - 0.8
-	         * @param {?number} quality - 100
-	         */
-	        Video: WhammyVideo
-	    };
-	})();
-
-	// ______________ (indexed-db)
-	// DiskStorage.js
-
-	/**
-	 * DiskStorage is a standalone object used by {@link RecordRTC} to store recorded blobs in IndexedDB storage.
-	 * @summary Writing blobs into IndexedDB.
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @example
-	 * DiskStorage.Store({
-	 *     audioBlob: yourAudioBlob,
-	 *     videoBlob: yourVideoBlob,
-	 *     gifBlob  : yourGifBlob
-	 * });
-	 * DiskStorage.Fetch(function(dataURL, type) {
-	 *     if(type === 'audioBlob') { }
-	 *     if(type === 'videoBlob') { }
-	 *     if(type === 'gifBlob')   { }
-	 * });
-	 * // DiskStorage.dataStoreName = 'recordRTC';
-	 * // DiskStorage.onError = function(error) { };
-	 * @property {function} init - This method must be called once to initialize IndexedDB ObjectStore. Though, it is auto-used internally.
-	 * @property {function} Fetch - This method fetches stored blobs from IndexedDB.
-	 * @property {function} Store - This method stores blobs in IndexedDB.
-	 * @property {function} onError - This function is invoked for any known/unknown error.
-	 * @property {string} dataStoreName - Name of the ObjectStore created in IndexedDB storage.
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 */
-
-
-	var DiskStorage = {
-	    /**
-	     * This method must be called once to initialize IndexedDB ObjectStore. Though, it is auto-used internally.
-	     * @method
-	     * @memberof DiskStorage
-	     * @internal
-	     * @example
-	     * DiskStorage.init();
-	     */
-	    init: function() {
-	        var self = this;
-
-	        if (typeof indexedDB === 'undefined' || typeof indexedDB.open === 'undefined') {
-	            console.error('IndexedDB API are not available in this browser.');
-	            return;
-	        }
-
-	        if (typeof webkitIndexedDB !== 'undefined') {
-	            indexedDB = webkitIndexedDB;
-	        }
-
-	        if (typeof mozIndexedDB !== 'undefined') {
-	            indexedDB = mozIndexedDB;
-	        }
-
-	        if (typeof OIndexedDB !== 'undefined') {
-	            indexedDB = OIndexedDB;
-	        }
-
-	        if (typeof msIndexedDB !== 'undefined') {
-	            indexedDB = msIndexedDB;
-	        }
-
-	        var dbVersion = 1;
-	        var dbName = this.dbName || location.href.replace(/\/|:|#|%|\.|\[|\]/g, ''),
-	            db;
-	        var request = indexedDB.open(dbName, dbVersion);
-
-	        function createObjectStore(dataBase) {
-	            dataBase.createObjectStore(self.dataStoreName);
-	        }
-
-	        function putInDB() {
-	            var transaction = db.transaction([self.dataStoreName], 'readwrite');
-
-	            if (self.videoBlob) {
-	                transaction.objectStore(self.dataStoreName).put(self.videoBlob, 'videoBlob');
-	            }
-
-	            if (self.gifBlob) {
-	                transaction.objectStore(self.dataStoreName).put(self.gifBlob, 'gifBlob');
-	            }
-
-	            if (self.audioBlob) {
-	                transaction.objectStore(self.dataStoreName).put(self.audioBlob, 'audioBlob');
-	            }
-
-	            function getFromStore(portionName) {
-	                transaction.objectStore(self.dataStoreName).get(portionName).onsuccess = function(event) {
-	                    if (self.callback) {
-	                        self.callback(event.target.result, portionName);
-	                    }
-	                };
-	            }
-
-	            getFromStore('audioBlob');
-	            getFromStore('videoBlob');
-	            getFromStore('gifBlob');
-	        }
-
-	        request.onerror = self.onError;
-
-	        request.onsuccess = function() {
-	            db = request.result;
-	            db.onerror = self.onError;
-
-	            if (db.setVersion) {
-	                if (db.version !== dbVersion) {
-	                    var setVersion = db.setVersion(dbVersion);
-	                    setVersion.onsuccess = function() {
-	                        createObjectStore(db);
-	                        putInDB();
-	                    };
-	                } else {
-	                    putInDB();
-	                }
-	            } else {
-	                putInDB();
-	            }
-	        };
-	        request.onupgradeneeded = function(event) {
-	            createObjectStore(event.target.result);
-	        };
-	    },
-	    /**
-	     * This method fetches stored blobs from IndexedDB.
-	     * @method
-	     * @memberof DiskStorage
-	     * @internal
-	     * @example
-	     * DiskStorage.Fetch(function(dataURL, type) {
-	     *     if(type === 'audioBlob') { }
-	     *     if(type === 'videoBlob') { }
-	     *     if(type === 'gifBlob')   { }
-	     * });
-	     */
-	    Fetch: function(callback) {
-	        this.callback = callback;
-	        this.init();
-
-	        return this;
-	    },
-	    /**
-	     * This method stores blobs in IndexedDB.
-	     * @method
-	     * @memberof DiskStorage
-	     * @internal
-	     * @example
-	     * DiskStorage.Store({
-	     *     audioBlob: yourAudioBlob,
-	     *     videoBlob: yourVideoBlob,
-	     *     gifBlob  : yourGifBlob
-	     * });
-	     */
-	    Store: function(config) {
-	        this.audioBlob = config.audioBlob;
-	        this.videoBlob = config.videoBlob;
-	        this.gifBlob = config.gifBlob;
-
-	        this.init();
-
-	        return this;
-	    },
-	    /**
-	     * This function is invoked for any known/unknown error.
-	     * @method
-	     * @memberof DiskStorage
-	     * @internal
-	     * @example
-	     * DiskStorage.onError = function(error){
-	     *     alerot( JSON.stringify(error) );
-	     * };
-	     */
-	    onError: function(error) {
-	        console.error(JSON.stringify(error, null, '\t'));
-	    },
-
-	    /**
-	     * @property {string} dataStoreName - Name of the ObjectStore created in IndexedDB storage.
-	     * @memberof DiskStorage
-	     * @internal
-	     * @example
-	     * DiskStorage.dataStoreName = 'recordRTC';
-	     */
-	    dataStoreName: 'recordRTC',
-	    dbName: null
-	};
-
-	// ______________
-	// GifRecorder.js
-
-	/**
-	 * GifRecorder is standalone calss used by {@link RecordRTC} to record video or canvas into animated gif.
-	 * @license {@link https://github.com/muaz-khan/RecordRTC#license|MIT}
-	 * @author {@link http://www.MuazKhan.com|Muaz Khan}
-	 * @typedef GifRecorder
-	 * @class
-	 * @example
-	 * var recorder = new GifRecorder(mediaStream || canvas || context, { width: 1280, height: 720, frameRate: 200, quality: 10 });
-	 * recorder.record();
-	 * recorder.stop(function(blob) {
-	 *     img.src = URL.createObjectURL(blob);
-	 * });
-	 * @see {@link https://github.com/muaz-khan/RecordRTC|RecordRTC Source Code}
-	 * @param {MediaStream} mediaStream - MediaStream object or HTMLCanvasElement or CanvasRenderingContext2D.
-	 * @param {object} config - {disableLogs:true, initCallback: function, width: 320, height: 240, frameRate: 200, quality: 10}
-	 */
-
-	function GifRecorder(mediaStream, config) {
-	    if (typeof GIFEncoder === 'undefined') {
-	        throw 'Please link: https://cdn.webrtc-experiment.com/gif-recorder.js';
-	    }
-
-	    config = config || {};
-
-	    var isHTMLObject = mediaStream instanceof CanvasRenderingContext2D || mediaStream instanceof HTMLCanvasElement;
-
-	    /**
-	     * This method records MediaStream.
-	     * @method
-	     * @memberof GifRecorder
-	     * @example
-	     * recorder.record();
-	     */
-	    this.record = function() {
-	        if (!isHTMLObject) {
-	            if (!config.width) {
-	                config.width = video.offsetWidth || 320;
-	            }
-
-	            if (!this.height) {
-	                config.height = video.offsetHeight || 240;
-	            }
-
-	            if (!config.video) {
-	                config.video = {
-	                    width: config.width,
-	                    height: config.height
-	                };
-	            }
-
-	            if (!config.canvas) {
-	                config.canvas = {
-	                    width: config.width,
-	                    height: config.height
-	                };
-	            }
-
-	            canvas.width = config.canvas.width;
-	            canvas.height = config.canvas.height;
-
-	            video.width = config.video.width;
-	            video.height = config.video.height;
-	        }
-
-	        // external library to record as GIF images
-	        gifEncoder = new GIFEncoder();
-
-	        // void setRepeat(int iter) 
-	        // Sets the number of times the set of GIF frames should be played. 
-	        // Default is 1; 0 means play indefinitely.
-	        gifEncoder.setRepeat(0);
-
-	        // void setFrameRate(Number fps) 
-	        // Sets frame rate in frames per second. 
-	        // Equivalent to setDelay(1000/fps).
-	        // Using "setDelay" instead of "setFrameRate"
-	        gifEncoder.setDelay(config.frameRate || 200);
-
-	        // void setQuality(int quality) 
-	        // Sets quality of color quantization (conversion of images to the 
-	        // maximum 256 colors allowed by the GIF specification). 
-	        // Lower values (minimum = 1) produce better colors, 
-	        // but slow processing significantly. 10 is the default, 
-	        // and produces good color mapping at reasonable speeds. 
-	        // Values greater than 20 do not yield significant improvements in speed.
-	        gifEncoder.setQuality(config.quality || 10);
-
-	        // Boolean start() 
-	        // This writes the GIF Header and returns false if it fails.
-	        gifEncoder.start();
-
-	        startTime = Date.now();
-
-	        var self = this;
-
-	        function drawVideoFrame(time) {
-	            if (isPausedRecording) {
-	                return setTimeout(function() {
-	                    drawVideoFrame(time);
-	                }, 100);
-	            }
-
-	            lastAnimationFrame = requestAnimationFrame(drawVideoFrame);
-
-	            if (typeof lastFrameTime === undefined) {
-	                lastFrameTime = time;
-	            }
-
-	            // ~10 fps
-	            if (time - lastFrameTime < 90) {
-	                return;
-	            }
-
-	            if (!isHTMLObject && video.paused) {
-	                // via: https://github.com/muaz-khan/WebRTC-Experiment/pull/316
-	                // Tweak for Android Chrome
-	                video.play();
-	            }
-
-	            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-	            if (config.onGifPreview) {
-	                config.onGifPreview(canvas.toDataURL('image/png'));
-	            }
-
-	            gifEncoder.addFrame(context);
-	            lastFrameTime = time;
-	        }
-
-	        lastAnimationFrame = requestAnimationFrame(drawVideoFrame);
-
-	        if (config.initCallback) {
-	            config.initCallback();
-	        }
-	    };
-
-	    /**
-	     * This method stops recording MediaStream.
-	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
-	     * @method
-	     * @memberof GifRecorder
-	     * @example
-	     * recorder.stop(function(blob) {
-	     *     img.src = URL.createObjectURL(blob);
-	     * });
-	     */
-	    this.stop = function() {
-	        if (lastAnimationFrame) {
-	            cancelAnimationFrame(lastAnimationFrame);
-	        }
-
-	        endTime = Date.now();
-
-	        /**
-	         * @property {Blob} blob - The recorded blob object.
-	         * @memberof GifRecorder
-	         * @example
-	         * recorder.stop(function(){
-	         *     var blob = recorder.blob;
-	         * });
-	         */
-	        this.blob = new Blob([new Uint8Array(gifEncoder.stream().bin)], {
-	            type: 'image/gif'
-	        });
-
-	        // bug: find a way to clear old recorded blobs
-	        gifEncoder.stream().bin = [];
-	    };
-
-	    var isPausedRecording = false;
-
-	    /**
-	     * This method pauses the recording process.
-	     * @method
-	     * @memberof GifRecorder
-	     * @example
-	     * recorder.pause();
-	     */
-	    this.pause = function() {
-	        isPausedRecording = true;
-	    };
-
-	    /**
-	     * This method resumes the recording process.
-	     * @method
-	     * @memberof GifRecorder
-	     * @example
-	     * recorder.resume();
-	     */
-	    this.resume = function() {
-	        isPausedRecording = false;
-	    };
-
-	    /**
-	     * This method resets currently recorded data.
-	     * @method
-	     * @memberof GifRecorder
-	     * @example
-	     * recorder.clearRecordedData();
-	     */
-	    this.clearRecordedData = function() {
-	        if (!gifEncoder) {
-	            return;
-	        }
-
-	        this.pause();
-
-	        gifEncoder.stream().bin = [];
-	    };
-
-	    var canvas = document.createElement('canvas');
-	    var context = canvas.getContext('2d');
-
-	    if (isHTMLObject) {
-	        if (mediaStream instanceof CanvasRenderingContext2D) {
-	            context = mediaStream;
-	        } else if (mediaStream instanceof HTMLCanvasElement) {
-	            context = mediaStream.getContext('2d');
-	        }
-	    }
-
-	    if (!isHTMLObject) {
-	        var video = document.createElement('video');
-	        video.muted = true;
-	        video.autoplay = true;
-
-	        if (typeof video.srcObject !== 'undefined') {
-	            video.srcObject = mediaStream;
-	        } else {
-	            video.src = URL.createObjectURL(mediaStream);
-	        }
-
-	        video.play();
-	    }
-
-	    var lastAnimationFrame = null;
-	    var startTime, endTime, lastFrameTime;
-
-	    var gifEncoder;
-	}
-
-
-/***/ },
-/* 4 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var require;var __WEBPACK_AMD_DEFINE_RESULT__;/* WEBPACK VAR INJECTION */(function(process, global, module) {/*!
-	 * @overview RSVP - a tiny implementation of Promises/A+.
-	 * @copyright Copyright (c) 2014 Yehuda Katz, Tom Dale, Stefan Penner and contributors
-	 * @license   Licensed under MIT license
-	 *            See https://raw.githubusercontent.com/tildeio/rsvp.js/master/LICENSE
-	 * @version   3.1.0
-	 */
-
-	(function() {
-	    "use strict";
-	    function lib$rsvp$utils$$objectOrFunction(x) {
-	      return typeof x === 'function' || (typeof x === 'object' && x !== null);
-	    }
-
-	    function lib$rsvp$utils$$isFunction(x) {
-	      return typeof x === 'function';
-	    }
-
-	    function lib$rsvp$utils$$isMaybeThenable(x) {
-	      return typeof x === 'object' && x !== null;
-	    }
-
-	    var lib$rsvp$utils$$_isArray;
-	    if (!Array.isArray) {
-	      lib$rsvp$utils$$_isArray = function (x) {
-	        return Object.prototype.toString.call(x) === '[object Array]';
-	      };
-	    } else {
-	      lib$rsvp$utils$$_isArray = Array.isArray;
-	    }
-
-	    var lib$rsvp$utils$$isArray = lib$rsvp$utils$$_isArray;
-
-	    var lib$rsvp$utils$$now = Date.now || function() { return new Date().getTime(); };
-
-	    function lib$rsvp$utils$$F() { }
-
-	    var lib$rsvp$utils$$o_create = (Object.create || function (o) {
-	      if (arguments.length > 1) {
-	        throw new Error('Second argument not supported');
-	      }
-	      if (typeof o !== 'object') {
-	        throw new TypeError('Argument must be an object');
-	      }
-	      lib$rsvp$utils$$F.prototype = o;
-	      return new lib$rsvp$utils$$F();
-	    });
-	    function lib$rsvp$events$$indexOf(callbacks, callback) {
-	      for (var i=0, l=callbacks.length; i<l; i++) {
-	        if (callbacks[i] === callback) { return i; }
-	      }
-
-	      return -1;
-	    }
-
-	    function lib$rsvp$events$$callbacksFor(object) {
-	      var callbacks = object._promiseCallbacks;
-
-	      if (!callbacks) {
-	        callbacks = object._promiseCallbacks = {};
-	      }
-
-	      return callbacks;
-	    }
-
-	    var lib$rsvp$events$$default = {
-
-	      /**
-	        `RSVP.EventTarget.mixin` extends an object with EventTarget methods. For
-	        Example:
-
-	        ```javascript
-	        var object = {};
-
-	        RSVP.EventTarget.mixin(object);
-
-	        object.on('finished', function(event) {
-	          // handle event
-	        });
-
-	        object.trigger('finished', { detail: value });
-	        ```
-
-	        `EventTarget.mixin` also works with prototypes:
-
-	        ```javascript
-	        var Person = function() {};
-	        RSVP.EventTarget.mixin(Person.prototype);
-
-	        var yehuda = new Person();
-	        var tom = new Person();
-
-	        yehuda.on('poke', function(event) {
-	          console.log('Yehuda says OW');
-	        });
-
-	        tom.on('poke', function(event) {
-	          console.log('Tom says OW');
-	        });
-
-	        yehuda.trigger('poke');
-	        tom.trigger('poke');
-	        ```
-
-	        @method mixin
-	        @for RSVP.EventTarget
-	        @private
-	        @param {Object} object object to extend with EventTarget methods
-	      */
-	      'mixin': function(object) {
-	        object['on']      = this['on'];
-	        object['off']     = this['off'];
-	        object['trigger'] = this['trigger'];
-	        object._promiseCallbacks = undefined;
-	        return object;
-	      },
-
-	      /**
-	        Registers a callback to be executed when `eventName` is triggered
-
-	        ```javascript
-	        object.on('event', function(eventInfo){
-	          // handle the event
-	        });
-
-	        object.trigger('event');
-	        ```
-
-	        @method on
-	        @for RSVP.EventTarget
-	        @private
-	        @param {String} eventName name of the event to listen for
-	        @param {Function} callback function to be called when the event is triggered.
-	      */
-	      'on': function(eventName, callback) {
-	        if (typeof callback !== 'function') {
-	          throw new TypeError('Callback must be a function');
-	        }
-
-	        var allCallbacks = lib$rsvp$events$$callbacksFor(this), callbacks;
-
-	        callbacks = allCallbacks[eventName];
-
-	        if (!callbacks) {
-	          callbacks = allCallbacks[eventName] = [];
-	        }
-
-	        if (lib$rsvp$events$$indexOf(callbacks, callback) === -1) {
-	          callbacks.push(callback);
-	        }
-	      },
-
-	      /**
-	        You can use `off` to stop firing a particular callback for an event:
-
-	        ```javascript
-	        function doStuff() { // do stuff! }
-	        object.on('stuff', doStuff);
-
-	        object.trigger('stuff'); // doStuff will be called
-
-	        // Unregister ONLY the doStuff callback
-	        object.off('stuff', doStuff);
-	        object.trigger('stuff'); // doStuff will NOT be called
-	        ```
-
-	        If you don't pass a `callback` argument to `off`, ALL callbacks for the
-	        event will not be executed when the event fires. For example:
-
-	        ```javascript
-	        var callback1 = function(){};
-	        var callback2 = function(){};
-
-	        object.on('stuff', callback1);
-	        object.on('stuff', callback2);
-
-	        object.trigger('stuff'); // callback1 and callback2 will be executed.
-
-	        object.off('stuff');
-	        object.trigger('stuff'); // callback1 and callback2 will not be executed!
-	        ```
-
-	        @method off
-	        @for RSVP.EventTarget
-	        @private
-	        @param {String} eventName event to stop listening to
-	        @param {Function} callback optional argument. If given, only the function
-	        given will be removed from the event's callback queue. If no `callback`
-	        argument is given, all callbacks will be removed from the event's callback
-	        queue.
-	      */
-	      'off': function(eventName, callback) {
-	        var allCallbacks = lib$rsvp$events$$callbacksFor(this), callbacks, index;
-
-	        if (!callback) {
-	          allCallbacks[eventName] = [];
-	          return;
-	        }
-
-	        callbacks = allCallbacks[eventName];
-
-	        index = lib$rsvp$events$$indexOf(callbacks, callback);
-
-	        if (index !== -1) { callbacks.splice(index, 1); }
-	      },
-
-	      /**
-	        Use `trigger` to fire custom events. For example:
-
-	        ```javascript
-	        object.on('foo', function(){
-	          console.log('foo event happened!');
-	        });
-	        object.trigger('foo');
-	        // 'foo event happened!' logged to the console
-	        ```
-
-	        You can also pass a value as a second argument to `trigger` that will be
-	        passed as an argument to all event listeners for the event:
-
-	        ```javascript
-	        object.on('foo', function(value){
-	          console.log(value.name);
-	        });
-
-	        object.trigger('foo', { name: 'bar' });
-	        // 'bar' logged to the console
-	        ```
-
-	        @method trigger
-	        @for RSVP.EventTarget
-	        @private
-	        @param {String} eventName name of the event to be triggered
-	        @param {*} options optional value to be passed to any event handlers for
-	        the given `eventName`
-	      */
-	      'trigger': function(eventName, options, label) {
-	        var allCallbacks = lib$rsvp$events$$callbacksFor(this), callbacks, callback;
-
-	        if (callbacks = allCallbacks[eventName]) {
-	          // Don't cache the callbacks.length since it may grow
-	          for (var i=0; i<callbacks.length; i++) {
-	            callback = callbacks[i];
-
-	            callback(options, label);
-	          }
-	        }
-	      }
-	    };
-
-	    var lib$rsvp$config$$config = {
-	      instrument: false
-	    };
-
-	    lib$rsvp$events$$default['mixin'](lib$rsvp$config$$config);
-
-	    function lib$rsvp$config$$configure(name, value) {
-	      if (name === 'onerror') {
-	        // handle for legacy users that expect the actual
-	        // error to be passed to their function added via
-	        // `RSVP.configure('onerror', someFunctionHere);`
-	        lib$rsvp$config$$config['on']('error', value);
-	        return;
-	      }
-
-	      if (arguments.length === 2) {
-	        lib$rsvp$config$$config[name] = value;
-	      } else {
-	        return lib$rsvp$config$$config[name];
-	      }
-	    }
-
-	    var lib$rsvp$instrument$$queue = [];
-
-	    function lib$rsvp$instrument$$scheduleFlush() {
-	      setTimeout(function() {
-	        var entry;
-	        for (var i = 0; i < lib$rsvp$instrument$$queue.length; i++) {
-	          entry = lib$rsvp$instrument$$queue[i];
-
-	          var payload = entry.payload;
-
-	          payload.guid = payload.key + payload.id;
-	          payload.childGuid = payload.key + payload.childId;
-	          if (payload.error) {
-	            payload.stack = payload.error.stack;
-	          }
-
-	          lib$rsvp$config$$config['trigger'](entry.name, entry.payload);
-	        }
-	        lib$rsvp$instrument$$queue.length = 0;
-	      }, 50);
-	    }
-
-	    function lib$rsvp$instrument$$instrument(eventName, promise, child) {
-	      if (1 === lib$rsvp$instrument$$queue.push({
-	        name: eventName,
-	        payload: {
-	          key: promise._guidKey,
-	          id:  promise._id,
-	          eventName: eventName,
-	          detail: promise._result,
-	          childId: child && child._id,
-	          label: promise._label,
-	          timeStamp: lib$rsvp$utils$$now(),
-	          error: lib$rsvp$config$$config["instrument-with-stack"] ? new Error(promise._label) : null
-	        }})) {
-	          lib$rsvp$instrument$$scheduleFlush();
-	        }
-	      }
-	    var lib$rsvp$instrument$$default = lib$rsvp$instrument$$instrument;
-
-	    function  lib$rsvp$$internal$$withOwnPromise() {
-	      return new TypeError('A promises callback cannot return that same promise.');
-	    }
-
-	    function lib$rsvp$$internal$$noop() {}
-
-	    var lib$rsvp$$internal$$PENDING   = void 0;
-	    var lib$rsvp$$internal$$FULFILLED = 1;
-	    var lib$rsvp$$internal$$REJECTED  = 2;
-
-	    var lib$rsvp$$internal$$GET_THEN_ERROR = new lib$rsvp$$internal$$ErrorObject();
-
-	    function lib$rsvp$$internal$$getThen(promise) {
-	      try {
-	        return promise.then;
-	      } catch(error) {
-	        lib$rsvp$$internal$$GET_THEN_ERROR.error = error;
-	        return lib$rsvp$$internal$$GET_THEN_ERROR;
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$tryThen(then, value, fulfillmentHandler, rejectionHandler) {
-	      try {
-	        then.call(value, fulfillmentHandler, rejectionHandler);
-	      } catch(e) {
-	        return e;
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$handleForeignThenable(promise, thenable, then) {
-	      lib$rsvp$config$$config.async(function(promise) {
-	        var sealed = false;
-	        var error = lib$rsvp$$internal$$tryThen(then, thenable, function(value) {
-	          if (sealed) { return; }
-	          sealed = true;
-	          if (thenable !== value) {
-	            lib$rsvp$$internal$$resolve(promise, value);
-	          } else {
-	            lib$rsvp$$internal$$fulfill(promise, value);
-	          }
-	        }, function(reason) {
-	          if (sealed) { return; }
-	          sealed = true;
-
-	          lib$rsvp$$internal$$reject(promise, reason);
-	        }, 'Settle: ' + (promise._label || ' unknown promise'));
-
-	        if (!sealed && error) {
-	          sealed = true;
-	          lib$rsvp$$internal$$reject(promise, error);
-	        }
-	      }, promise);
-	    }
-
-	    function lib$rsvp$$internal$$handleOwnThenable(promise, thenable) {
-	      if (thenable._state === lib$rsvp$$internal$$FULFILLED) {
-	        lib$rsvp$$internal$$fulfill(promise, thenable._result);
-	      } else if (thenable._state === lib$rsvp$$internal$$REJECTED) {
-	        thenable._onError = null;
-	        lib$rsvp$$internal$$reject(promise, thenable._result);
-	      } else {
-	        lib$rsvp$$internal$$subscribe(thenable, undefined, function(value) {
-	          if (thenable !== value) {
-	            lib$rsvp$$internal$$resolve(promise, value);
-	          } else {
-	            lib$rsvp$$internal$$fulfill(promise, value);
-	          }
-	        }, function(reason) {
-	          lib$rsvp$$internal$$reject(promise, reason);
-	        });
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$handleMaybeThenable(promise, maybeThenable) {
-	      if (maybeThenable.constructor === promise.constructor) {
-	        lib$rsvp$$internal$$handleOwnThenable(promise, maybeThenable);
-	      } else {
-	        var then = lib$rsvp$$internal$$getThen(maybeThenable);
-
-	        if (then === lib$rsvp$$internal$$GET_THEN_ERROR) {
-	          lib$rsvp$$internal$$reject(promise, lib$rsvp$$internal$$GET_THEN_ERROR.error);
-	        } else if (then === undefined) {
-	          lib$rsvp$$internal$$fulfill(promise, maybeThenable);
-	        } else if (lib$rsvp$utils$$isFunction(then)) {
-	          lib$rsvp$$internal$$handleForeignThenable(promise, maybeThenable, then);
-	        } else {
-	          lib$rsvp$$internal$$fulfill(promise, maybeThenable);
-	        }
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$resolve(promise, value) {
-	      if (promise === value) {
-	        lib$rsvp$$internal$$fulfill(promise, value);
-	      } else if (lib$rsvp$utils$$objectOrFunction(value)) {
-	        lib$rsvp$$internal$$handleMaybeThenable(promise, value);
-	      } else {
-	        lib$rsvp$$internal$$fulfill(promise, value);
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$publishRejection(promise) {
-	      if (promise._onError) {
-	        promise._onError(promise._result);
-	      }
-
-	      lib$rsvp$$internal$$publish(promise);
-	    }
-
-	    function lib$rsvp$$internal$$fulfill(promise, value) {
-	      if (promise._state !== lib$rsvp$$internal$$PENDING) { return; }
-
-	      promise._result = value;
-	      promise._state = lib$rsvp$$internal$$FULFILLED;
-
-	      if (promise._subscribers.length === 0) {
-	        if (lib$rsvp$config$$config.instrument) {
-	          lib$rsvp$instrument$$default('fulfilled', promise);
-	        }
-	      } else {
-	        lib$rsvp$config$$config.async(lib$rsvp$$internal$$publish, promise);
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$reject(promise, reason) {
-	      if (promise._state !== lib$rsvp$$internal$$PENDING) { return; }
-	      promise._state = lib$rsvp$$internal$$REJECTED;
-	      promise._result = reason;
-	      lib$rsvp$config$$config.async(lib$rsvp$$internal$$publishRejection, promise);
-	    }
-
-	    function lib$rsvp$$internal$$subscribe(parent, child, onFulfillment, onRejection) {
-	      var subscribers = parent._subscribers;
-	      var length = subscribers.length;
-
-	      parent._onError = null;
-
-	      subscribers[length] = child;
-	      subscribers[length + lib$rsvp$$internal$$FULFILLED] = onFulfillment;
-	      subscribers[length + lib$rsvp$$internal$$REJECTED]  = onRejection;
-
-	      if (length === 0 && parent._state) {
-	        lib$rsvp$config$$config.async(lib$rsvp$$internal$$publish, parent);
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$publish(promise) {
-	      var subscribers = promise._subscribers;
-	      var settled = promise._state;
-
-	      if (lib$rsvp$config$$config.instrument) {
-	        lib$rsvp$instrument$$default(settled === lib$rsvp$$internal$$FULFILLED ? 'fulfilled' : 'rejected', promise);
-	      }
-
-	      if (subscribers.length === 0) { return; }
-
-	      var child, callback, detail = promise._result;
-
-	      for (var i = 0; i < subscribers.length; i += 3) {
-	        child = subscribers[i];
-	        callback = subscribers[i + settled];
-
-	        if (child) {
-	          lib$rsvp$$internal$$invokeCallback(settled, child, callback, detail);
-	        } else {
-	          callback(detail);
-	        }
-	      }
-
-	      promise._subscribers.length = 0;
-	    }
-
-	    function lib$rsvp$$internal$$ErrorObject() {
-	      this.error = null;
-	    }
-
-	    var lib$rsvp$$internal$$TRY_CATCH_ERROR = new lib$rsvp$$internal$$ErrorObject();
-
-	    function lib$rsvp$$internal$$tryCatch(callback, detail) {
-	      try {
-	        return callback(detail);
-	      } catch(e) {
-	        lib$rsvp$$internal$$TRY_CATCH_ERROR.error = e;
-	        return lib$rsvp$$internal$$TRY_CATCH_ERROR;
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$invokeCallback(settled, promise, callback, detail) {
-	      var hasCallback = lib$rsvp$utils$$isFunction(callback),
-	          value, error, succeeded, failed;
-
-	      if (hasCallback) {
-	        value = lib$rsvp$$internal$$tryCatch(callback, detail);
-
-	        if (value === lib$rsvp$$internal$$TRY_CATCH_ERROR) {
-	          failed = true;
-	          error = value.error;
-	          value = null;
-	        } else {
-	          succeeded = true;
-	        }
-
-	        if (promise === value) {
-	          lib$rsvp$$internal$$reject(promise, lib$rsvp$$internal$$withOwnPromise());
-	          return;
-	        }
-
-	      } else {
-	        value = detail;
-	        succeeded = true;
-	      }
-
-	      if (promise._state !== lib$rsvp$$internal$$PENDING) {
-	        // noop
-	      } else if (hasCallback && succeeded) {
-	        lib$rsvp$$internal$$resolve(promise, value);
-	      } else if (failed) {
-	        lib$rsvp$$internal$$reject(promise, error);
-	      } else if (settled === lib$rsvp$$internal$$FULFILLED) {
-	        lib$rsvp$$internal$$fulfill(promise, value);
-	      } else if (settled === lib$rsvp$$internal$$REJECTED) {
-	        lib$rsvp$$internal$$reject(promise, value);
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$initializePromise(promise, resolver) {
-	      var resolved = false;
-	      try {
-	        resolver(function resolvePromise(value){
-	          if (resolved) { return; }
-	          resolved = true;
-	          lib$rsvp$$internal$$resolve(promise, value);
-	        }, function rejectPromise(reason) {
-	          if (resolved) { return; }
-	          resolved = true;
-	          lib$rsvp$$internal$$reject(promise, reason);
-	        });
-	      } catch(e) {
-	        lib$rsvp$$internal$$reject(promise, e);
-	      }
-	    }
-
-	    function lib$rsvp$enumerator$$makeSettledResult(state, position, value) {
-	      if (state === lib$rsvp$$internal$$FULFILLED) {
-	        return {
-	          state: 'fulfilled',
-	          value: value
-	        };
-	      } else {
-	         return {
-	          state: 'rejected',
-	          reason: value
-	        };
-	      }
-	    }
-
-	    function lib$rsvp$enumerator$$Enumerator(Constructor, input, abortOnReject, label) {
-	      var enumerator = this;
-
-	      enumerator._instanceConstructor = Constructor;
-	      enumerator.promise = new Constructor(lib$rsvp$$internal$$noop, label);
-	      enumerator._abortOnReject = abortOnReject;
-
-	      if (enumerator._validateInput(input)) {
-	        enumerator._input     = input;
-	        enumerator.length     = input.length;
-	        enumerator._remaining = input.length;
-
-	        enumerator._init();
-
-	        if (enumerator.length === 0) {
-	          lib$rsvp$$internal$$fulfill(enumerator.promise, enumerator._result);
-	        } else {
-	          enumerator.length = enumerator.length || 0;
-	          enumerator._enumerate();
-	          if (enumerator._remaining === 0) {
-	            lib$rsvp$$internal$$fulfill(enumerator.promise, enumerator._result);
-	          }
-	        }
-	      } else {
-	        lib$rsvp$$internal$$reject(enumerator.promise, enumerator._validationError());
-	      }
-	    }
-
-	    var lib$rsvp$enumerator$$default = lib$rsvp$enumerator$$Enumerator;
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._validateInput = function(input) {
-	      return lib$rsvp$utils$$isArray(input);
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._validationError = function() {
-	      return new Error('Array Methods must be provided an Array');
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._init = function() {
-	      this._result = new Array(this.length);
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._enumerate = function() {
-	      var enumerator = this;
-	      var length     = enumerator.length;
-	      var promise    = enumerator.promise;
-	      var input      = enumerator._input;
-
-	      for (var i = 0; promise._state === lib$rsvp$$internal$$PENDING && i < length; i++) {
-	        enumerator._eachEntry(input[i], i);
-	      }
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._eachEntry = function(entry, i) {
-	      var enumerator = this;
-	      var c = enumerator._instanceConstructor;
-	      if (lib$rsvp$utils$$isMaybeThenable(entry)) {
-	        if (entry.constructor === c && entry._state !== lib$rsvp$$internal$$PENDING) {
-	          entry._onError = null;
-	          enumerator._settledAt(entry._state, i, entry._result);
-	        } else {
-	          enumerator._willSettleAt(c.resolve(entry), i);
-	        }
-	      } else {
-	        enumerator._remaining--;
-	        enumerator._result[i] = enumerator._makeResult(lib$rsvp$$internal$$FULFILLED, i, entry);
-	      }
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._settledAt = function(state, i, value) {
-	      var enumerator = this;
-	      var promise = enumerator.promise;
-
-	      if (promise._state === lib$rsvp$$internal$$PENDING) {
-	        enumerator._remaining--;
-
-	        if (enumerator._abortOnReject && state === lib$rsvp$$internal$$REJECTED) {
-	          lib$rsvp$$internal$$reject(promise, value);
-	        } else {
-	          enumerator._result[i] = enumerator._makeResult(state, i, value);
-	        }
-	      }
-
-	      if (enumerator._remaining === 0) {
-	        lib$rsvp$$internal$$fulfill(promise, enumerator._result);
-	      }
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._makeResult = function(state, i, value) {
-	      return value;
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._willSettleAt = function(promise, i) {
-	      var enumerator = this;
-
-	      lib$rsvp$$internal$$subscribe(promise, undefined, function(value) {
-	        enumerator._settledAt(lib$rsvp$$internal$$FULFILLED, i, value);
-	      }, function(reason) {
-	        enumerator._settledAt(lib$rsvp$$internal$$REJECTED, i, reason);
-	      });
-	    };
-	    function lib$rsvp$promise$all$$all(entries, label) {
-	      return new lib$rsvp$enumerator$$default(this, entries, true /* abort on reject */, label).promise;
-	    }
-	    var lib$rsvp$promise$all$$default = lib$rsvp$promise$all$$all;
-	    function lib$rsvp$promise$race$$race(entries, label) {
-	      /*jshint validthis:true */
-	      var Constructor = this;
-
-	      var promise = new Constructor(lib$rsvp$$internal$$noop, label);
-
-	      if (!lib$rsvp$utils$$isArray(entries)) {
-	        lib$rsvp$$internal$$reject(promise, new TypeError('You must pass an array to race.'));
-	        return promise;
-	      }
-
-	      var length = entries.length;
-
-	      function onFulfillment(value) {
-	        lib$rsvp$$internal$$resolve(promise, value);
-	      }
-
-	      function onRejection(reason) {
-	        lib$rsvp$$internal$$reject(promise, reason);
-	      }
-
-	      for (var i = 0; promise._state === lib$rsvp$$internal$$PENDING && i < length; i++) {
-	        lib$rsvp$$internal$$subscribe(Constructor.resolve(entries[i]), undefined, onFulfillment, onRejection);
-	      }
-
-	      return promise;
-	    }
-	    var lib$rsvp$promise$race$$default = lib$rsvp$promise$race$$race;
-	    function lib$rsvp$promise$resolve$$resolve(object, label) {
-	      /*jshint validthis:true */
-	      var Constructor = this;
-
-	      if (object && typeof object === 'object' && object.constructor === Constructor) {
-	        return object;
-	      }
-
-	      var promise = new Constructor(lib$rsvp$$internal$$noop, label);
-	      lib$rsvp$$internal$$resolve(promise, object);
-	      return promise;
-	    }
-	    var lib$rsvp$promise$resolve$$default = lib$rsvp$promise$resolve$$resolve;
-	    function lib$rsvp$promise$reject$$reject(reason, label) {
-	      /*jshint validthis:true */
-	      var Constructor = this;
-	      var promise = new Constructor(lib$rsvp$$internal$$noop, label);
-	      lib$rsvp$$internal$$reject(promise, reason);
-	      return promise;
-	    }
-	    var lib$rsvp$promise$reject$$default = lib$rsvp$promise$reject$$reject;
-
-	    var lib$rsvp$promise$$guidKey = 'rsvp_' + lib$rsvp$utils$$now() + '-';
-	    var lib$rsvp$promise$$counter = 0;
-
-	    function lib$rsvp$promise$$needsResolver() {
-	      throw new TypeError('You must pass a resolver function as the first argument to the promise constructor');
-	    }
-
-	    function lib$rsvp$promise$$needsNew() {
-	      throw new TypeError("Failed to construct 'Promise': Please use the 'new' operator, this object constructor cannot be called as a function.");
-	    }
-
-	    function lib$rsvp$promise$$Promise(resolver, label) {
-	      var promise = this;
-
-	      promise._id = lib$rsvp$promise$$counter++;
-	      promise._label = label;
-	      promise._state = undefined;
-	      promise._result = undefined;
-	      promise._subscribers = [];
-
-	      if (lib$rsvp$config$$config.instrument) {
-	        lib$rsvp$instrument$$default('created', promise);
-	      }
-
-	      if (lib$rsvp$$internal$$noop !== resolver) {
-	        if (!lib$rsvp$utils$$isFunction(resolver)) {
-	          lib$rsvp$promise$$needsResolver();
-	        }
-
-	        if (!(promise instanceof lib$rsvp$promise$$Promise)) {
-	          lib$rsvp$promise$$needsNew();
-	        }
-
-	        lib$rsvp$$internal$$initializePromise(promise, resolver);
-	      }
-	    }
-
-	    var lib$rsvp$promise$$default = lib$rsvp$promise$$Promise;
-
-	    // deprecated
-	    lib$rsvp$promise$$Promise.cast = lib$rsvp$promise$resolve$$default;
-	    lib$rsvp$promise$$Promise.all = lib$rsvp$promise$all$$default;
-	    lib$rsvp$promise$$Promise.race = lib$rsvp$promise$race$$default;
-	    lib$rsvp$promise$$Promise.resolve = lib$rsvp$promise$resolve$$default;
-	    lib$rsvp$promise$$Promise.reject = lib$rsvp$promise$reject$$default;
-
-	    lib$rsvp$promise$$Promise.prototype = {
-	      constructor: lib$rsvp$promise$$Promise,
-
-	      _guidKey: lib$rsvp$promise$$guidKey,
-
-	      _onError: function (reason) {
-	        var promise = this;
-	        lib$rsvp$config$$config.after(function() {
-	          if (promise._onError) {
-	            lib$rsvp$config$$config['trigger']('error', reason, promise._label);
-	          }
-	        });
-	      },
-
-	    /**
-	      The primary way of interacting with a promise is through its `then` method,
-	      which registers callbacks to receive either a promise's eventual value or the
-	      reason why the promise cannot be fulfilled.
-
-	      ```js
-	      findUser().then(function(user){
-	        // user is available
-	      }, function(reason){
-	        // user is unavailable, and you are given the reason why
-	      });
-	      ```
-
-	      Chaining
-	      --------
-
-	      The return value of `then` is itself a promise.  This second, 'downstream'
-	      promise is resolved with the return value of the first promise's fulfillment
-	      or rejection handler, or rejected if the handler throws an exception.
-
-	      ```js
-	      findUser().then(function (user) {
-	        return user.name;
-	      }, function (reason) {
-	        return 'default name';
-	      }).then(function (userName) {
-	        // If `findUser` fulfilled, `userName` will be the user's name, otherwise it
-	        // will be `'default name'`
-	      });
-
-	      findUser().then(function (user) {
-	        throw new Error('Found user, but still unhappy');
-	      }, function (reason) {
-	        throw new Error('`findUser` rejected and we're unhappy');
-	      }).then(function (value) {
-	        // never reached
-	      }, function (reason) {
-	        // if `findUser` fulfilled, `reason` will be 'Found user, but still unhappy'.
-	        // If `findUser` rejected, `reason` will be '`findUser` rejected and we're unhappy'.
-	      });
-	      ```
-	      If the downstream promise does not specify a rejection handler, rejection reasons will be propagated further downstream.
-
-	      ```js
-	      findUser().then(function (user) {
-	        throw new PedagogicalException('Upstream error');
-	      }).then(function (value) {
-	        // never reached
-	      }).then(function (value) {
-	        // never reached
-	      }, function (reason) {
-	        // The `PedgagocialException` is propagated all the way down to here
-	      });
-	      ```
-
-	      Assimilation
-	      ------------
-
-	      Sometimes the value you want to propagate to a downstream promise can only be
-	      retrieved asynchronously. This can be achieved by returning a promise in the
-	      fulfillment or rejection handler. The downstream promise will then be pending
-	      until the returned promise is settled. This is called *assimilation*.
-
-	      ```js
-	      findUser().then(function (user) {
-	        return findCommentsByAuthor(user);
-	      }).then(function (comments) {
-	        // The user's comments are now available
-	      });
-	      ```
-
-	      If the assimliated promise rejects, then the downstream promise will also reject.
-
-	      ```js
-	      findUser().then(function (user) {
-	        return findCommentsByAuthor(user);
-	      }).then(function (comments) {
-	        // If `findCommentsByAuthor` fulfills, we'll have the value here
-	      }, function (reason) {
-	        // If `findCommentsByAuthor` rejects, we'll have the reason here
-	      });
-	      ```
-
-	      Simple Example
-	      --------------
-
-	      Synchronous Example
-
-	      ```javascript
-	      var result;
-
-	      try {
-	        result = findResult();
-	        // success
-	      } catch(reason) {
-	        // failure
-	      }
-	      ```
-
-	      Errback Example
-
-	      ```js
-	      findResult(function(result, err){
-	        if (err) {
-	          // failure
-	        } else {
-	          // success
-	        }
-	      });
-	      ```
-
-	      Promise Example;
-
-	      ```javascript
-	      findResult().then(function(result){
-	        // success
-	      }, function(reason){
-	        // failure
-	      });
-	      ```
-
-	      Advanced Example
-	      --------------
-
-	      Synchronous Example
-
-	      ```javascript
-	      var author, books;
-
-	      try {
-	        author = findAuthor();
-	        books  = findBooksByAuthor(author);
-	        // success
-	      } catch(reason) {
-	        // failure
-	      }
-	      ```
-
-	      Errback Example
-
-	      ```js
-
-	      function foundBooks(books) {
-
-	      }
-
-	      function failure(reason) {
-
-	      }
-
-	      findAuthor(function(author, err){
-	        if (err) {
-	          failure(err);
-	          // failure
-	        } else {
-	          try {
-	            findBoooksByAuthor(author, function(books, err) {
-	              if (err) {
-	                failure(err);
-	              } else {
-	                try {
-	                  foundBooks(books);
-	                } catch(reason) {
-	                  failure(reason);
-	                }
-	              }
-	            });
-	          } catch(error) {
-	            failure(err);
-	          }
-	          // success
-	        }
-	      });
-	      ```
-
-	      Promise Example;
-
-	      ```javascript
-	      findAuthor().
-	        then(findBooksByAuthor).
-	        then(function(books){
-	          // found books
-	      }).catch(function(reason){
-	        // something went wrong
-	      });
-	      ```
-
-	      @method then
-	      @param {Function} onFulfillment
-	      @param {Function} onRejection
-	      @param {String} label optional string for labeling the promise.
-	      Useful for tooling.
-	      @return {Promise}
-	    */
-	      then: function(onFulfillment, onRejection, label) {
-	        var parent = this;
-	        var state = parent._state;
-
-	        if (state === lib$rsvp$$internal$$FULFILLED && !onFulfillment || state === lib$rsvp$$internal$$REJECTED && !onRejection) {
-	          if (lib$rsvp$config$$config.instrument) {
-	            lib$rsvp$instrument$$default('chained', parent, parent);
-	          }
-	          return parent;
-	        }
-
-	        parent._onError = null;
-
-	        var child = new parent.constructor(lib$rsvp$$internal$$noop, label);
-	        var result = parent._result;
-
-	        if (lib$rsvp$config$$config.instrument) {
-	          lib$rsvp$instrument$$default('chained', parent, child);
-	        }
-
-	        if (state) {
-	          var callback = arguments[state - 1];
-	          lib$rsvp$config$$config.async(function(){
-	            lib$rsvp$$internal$$invokeCallback(state, child, callback, result);
-	          });
-	        } else {
-	          lib$rsvp$$internal$$subscribe(parent, child, onFulfillment, onRejection);
-	        }
-
-	        return child;
-	      },
-
-	    /**
-	      `catch` is simply sugar for `then(undefined, onRejection)` which makes it the same
-	      as the catch block of a try/catch statement.
-
-	      ```js
-	      function findAuthor(){
-	        throw new Error('couldn't find that author');
-	      }
-
-	      // synchronous
-	      try {
-	        findAuthor();
-	      } catch(reason) {
-	        // something went wrong
-	      }
-
-	      // async with promises
-	      findAuthor().catch(function(reason){
-	        // something went wrong
-	      });
-	      ```
-
-	      @method catch
-	      @param {Function} onRejection
-	      @param {String} label optional string for labeling the promise.
-	      Useful for tooling.
-	      @return {Promise}
-	    */
-	      'catch': function(onRejection, label) {
-	        return this.then(undefined, onRejection, label);
-	      },
-
-	    /**
-	      `finally` will be invoked regardless of the promise's fate just as native
-	      try/catch/finally behaves
-
-	      Synchronous example:
-
-	      ```js
-	      findAuthor() {
-	        if (Math.random() > 0.5) {
-	          throw new Error();
-	        }
-	        return new Author();
-	      }
-
-	      try {
-	        return findAuthor(); // succeed or fail
-	      } catch(error) {
-	        return findOtherAuther();
-	      } finally {
-	        // always runs
-	        // doesn't affect the return value
-	      }
-	      ```
-
-	      Asynchronous example:
-
-	      ```js
-	      findAuthor().catch(function(reason){
-	        return findOtherAuther();
-	      }).finally(function(){
-	        // author was either found, or not
-	      });
-	      ```
-
-	      @method finally
-	      @param {Function} callback
-	      @param {String} label optional string for labeling the promise.
-	      Useful for tooling.
-	      @return {Promise}
-	    */
-	      'finally': function(callback, label) {
-	        var promise = this;
-	        var constructor = promise.constructor;
-
-	        return promise.then(function(value) {
-	          return constructor.resolve(callback()).then(function(){
-	            return value;
-	          });
-	        }, function(reason) {
-	          return constructor.resolve(callback()).then(function(){
-	            throw reason;
-	          });
-	        }, label);
-	      }
-	    };
-
-	    function lib$rsvp$all$settled$$AllSettled(Constructor, entries, label) {
-	      this._superConstructor(Constructor, entries, false /* don't abort on reject */, label);
-	    }
-
-	    lib$rsvp$all$settled$$AllSettled.prototype = lib$rsvp$utils$$o_create(lib$rsvp$enumerator$$default.prototype);
-	    lib$rsvp$all$settled$$AllSettled.prototype._superConstructor = lib$rsvp$enumerator$$default;
-	    lib$rsvp$all$settled$$AllSettled.prototype._makeResult = lib$rsvp$enumerator$$makeSettledResult;
-	    lib$rsvp$all$settled$$AllSettled.prototype._validationError = function() {
-	      return new Error('allSettled must be called with an array');
-	    };
-
-	    function lib$rsvp$all$settled$$allSettled(entries, label) {
-	      return new lib$rsvp$all$settled$$AllSettled(lib$rsvp$promise$$default, entries, label).promise;
-	    }
-	    var lib$rsvp$all$settled$$default = lib$rsvp$all$settled$$allSettled;
-	    function lib$rsvp$all$$all(array, label) {
-	      return lib$rsvp$promise$$default.all(array, label);
-	    }
-	    var lib$rsvp$all$$default = lib$rsvp$all$$all;
-	    var lib$rsvp$asap$$len = 0;
-	    var lib$rsvp$asap$$toString = {}.toString;
-	    var lib$rsvp$asap$$vertxNext;
-	    function lib$rsvp$asap$$asap(callback, arg) {
-	      lib$rsvp$asap$$queue[lib$rsvp$asap$$len] = callback;
-	      lib$rsvp$asap$$queue[lib$rsvp$asap$$len + 1] = arg;
-	      lib$rsvp$asap$$len += 2;
-	      if (lib$rsvp$asap$$len === 2) {
-	        // If len is 1, that means that we need to schedule an async flush.
-	        // If additional callbacks are queued before the queue is flushed, they
-	        // will be processed by this flush that we are scheduling.
-	        lib$rsvp$asap$$scheduleFlush();
-	      }
-	    }
-
-	    var lib$rsvp$asap$$default = lib$rsvp$asap$$asap;
-
-	    var lib$rsvp$asap$$browserWindow = (typeof window !== 'undefined') ? window : undefined;
-	    var lib$rsvp$asap$$browserGlobal = lib$rsvp$asap$$browserWindow || {};
-	    var lib$rsvp$asap$$BrowserMutationObserver = lib$rsvp$asap$$browserGlobal.MutationObserver || lib$rsvp$asap$$browserGlobal.WebKitMutationObserver;
-	    var lib$rsvp$asap$$isNode = typeof self === 'undefined' &&
-	      typeof process !== 'undefined' && {}.toString.call(process) === '[object process]';
-
-	    // test for web worker but not in IE10
-	    var lib$rsvp$asap$$isWorker = typeof Uint8ClampedArray !== 'undefined' &&
-	      typeof importScripts !== 'undefined' &&
-	      typeof MessageChannel !== 'undefined';
-
-	    // node
-	    function lib$rsvp$asap$$useNextTick() {
-	      var nextTick = process.nextTick;
-	      // node version 0.10.x displays a deprecation warning when nextTick is used recursively
-	      // setImmediate should be used instead instead
-	      var version = process.versions.node.match(/^(?:(\d+)\.)?(?:(\d+)\.)?(\*|\d+)$/);
-	      if (Array.isArray(version) && version[1] === '0' && version[2] === '10') {
-	        nextTick = setImmediate;
-	      }
-	      return function() {
-	        nextTick(lib$rsvp$asap$$flush);
-	      };
-	    }
-
-	    // vertx
-	    function lib$rsvp$asap$$useVertxTimer() {
-	      return function() {
-	        lib$rsvp$asap$$vertxNext(lib$rsvp$asap$$flush);
-	      };
-	    }
-
-	    function lib$rsvp$asap$$useMutationObserver() {
-	      var iterations = 0;
-	      var observer = new lib$rsvp$asap$$BrowserMutationObserver(lib$rsvp$asap$$flush);
-	      var node = document.createTextNode('');
-	      observer.observe(node, { characterData: true });
-
-	      return function() {
-	        node.data = (iterations = ++iterations % 2);
-	      };
-	    }
-
-	    // web worker
-	    function lib$rsvp$asap$$useMessageChannel() {
-	      var channel = new MessageChannel();
-	      channel.port1.onmessage = lib$rsvp$asap$$flush;
-	      return function () {
-	        channel.port2.postMessage(0);
-	      };
-	    }
-
-	    function lib$rsvp$asap$$useSetTimeout() {
-	      return function() {
-	        setTimeout(lib$rsvp$asap$$flush, 1);
-	      };
-	    }
-
-	    var lib$rsvp$asap$$queue = new Array(1000);
-	    function lib$rsvp$asap$$flush() {
-	      for (var i = 0; i < lib$rsvp$asap$$len; i+=2) {
-	        var callback = lib$rsvp$asap$$queue[i];
-	        var arg = lib$rsvp$asap$$queue[i+1];
-
-	        callback(arg);
-
-	        lib$rsvp$asap$$queue[i] = undefined;
-	        lib$rsvp$asap$$queue[i+1] = undefined;
-	      }
-
-	      lib$rsvp$asap$$len = 0;
-	    }
-
-	    function lib$rsvp$asap$$attemptVertex() {
-	      try {
-	        var r = require;
-	        var vertx = __webpack_require__(5);
-	        lib$rsvp$asap$$vertxNext = vertx.runOnLoop || vertx.runOnContext;
-	        return lib$rsvp$asap$$useVertxTimer();
-	      } catch(e) {
-	        return lib$rsvp$asap$$useSetTimeout();
-	      }
-	    }
-
-	    var lib$rsvp$asap$$scheduleFlush;
-	    // Decide what async method to use to triggering processing of queued callbacks:
-	    if (lib$rsvp$asap$$isNode) {
-	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useNextTick();
-	    } else if (lib$rsvp$asap$$BrowserMutationObserver) {
-	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useMutationObserver();
-	    } else if (lib$rsvp$asap$$isWorker) {
-	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useMessageChannel();
-	    } else if (lib$rsvp$asap$$browserWindow === undefined && "function" === 'function') {
-	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$attemptVertex();
-	    } else {
-	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useSetTimeout();
-	    }
-	    function lib$rsvp$defer$$defer(label) {
-	      var deferred = {};
-
-	      deferred['promise'] = new lib$rsvp$promise$$default(function(resolve, reject) {
-	        deferred['resolve'] = resolve;
-	        deferred['reject'] = reject;
-	      }, label);
-
-	      return deferred;
-	    }
-	    var lib$rsvp$defer$$default = lib$rsvp$defer$$defer;
-	    function lib$rsvp$filter$$filter(promises, filterFn, label) {
-	      return lib$rsvp$promise$$default.all(promises, label).then(function(values) {
-	        if (!lib$rsvp$utils$$isFunction(filterFn)) {
-	          throw new TypeError("You must pass a function as filter's second argument.");
-	        }
-
-	        var length = values.length;
-	        var filtered = new Array(length);
-
-	        for (var i = 0; i < length; i++) {
-	          filtered[i] = filterFn(values[i]);
-	        }
-
-	        return lib$rsvp$promise$$default.all(filtered, label).then(function(filtered) {
-	          var results = new Array(length);
-	          var newLength = 0;
-
-	          for (var i = 0; i < length; i++) {
-	            if (filtered[i]) {
-	              results[newLength] = values[i];
-	              newLength++;
-	            }
-	          }
-
-	          results.length = newLength;
-
-	          return results;
-	        });
-	      });
-	    }
-	    var lib$rsvp$filter$$default = lib$rsvp$filter$$filter;
-
-	    function lib$rsvp$promise$hash$$PromiseHash(Constructor, object, label) {
-	      this._superConstructor(Constructor, object, true, label);
-	    }
-
-	    var lib$rsvp$promise$hash$$default = lib$rsvp$promise$hash$$PromiseHash;
-
-	    lib$rsvp$promise$hash$$PromiseHash.prototype = lib$rsvp$utils$$o_create(lib$rsvp$enumerator$$default.prototype);
-	    lib$rsvp$promise$hash$$PromiseHash.prototype._superConstructor = lib$rsvp$enumerator$$default;
-	    lib$rsvp$promise$hash$$PromiseHash.prototype._init = function() {
-	      this._result = {};
-	    };
-
-	    lib$rsvp$promise$hash$$PromiseHash.prototype._validateInput = function(input) {
-	      return input && typeof input === 'object';
-	    };
-
-	    lib$rsvp$promise$hash$$PromiseHash.prototype._validationError = function() {
-	      return new Error('Promise.hash must be called with an object');
-	    };
-
-	    lib$rsvp$promise$hash$$PromiseHash.prototype._enumerate = function() {
-	      var enumerator = this;
-	      var promise    = enumerator.promise;
-	      var input      = enumerator._input;
-	      var results    = [];
-
-	      for (var key in input) {
-	        if (promise._state === lib$rsvp$$internal$$PENDING && Object.prototype.hasOwnProperty.call(input, key)) {
-	          results.push({
-	            position: key,
-	            entry: input[key]
-	          });
-	        }
-	      }
-
-	      var length = results.length;
-	      enumerator._remaining = length;
-	      var result;
-
-	      for (var i = 0; promise._state === lib$rsvp$$internal$$PENDING && i < length; i++) {
-	        result = results[i];
-	        enumerator._eachEntry(result.entry, result.position);
-	      }
-	    };
-
-	    function lib$rsvp$hash$settled$$HashSettled(Constructor, object, label) {
-	      this._superConstructor(Constructor, object, false, label);
-	    }
-
-	    lib$rsvp$hash$settled$$HashSettled.prototype = lib$rsvp$utils$$o_create(lib$rsvp$promise$hash$$default.prototype);
-	    lib$rsvp$hash$settled$$HashSettled.prototype._superConstructor = lib$rsvp$enumerator$$default;
-	    lib$rsvp$hash$settled$$HashSettled.prototype._makeResult = lib$rsvp$enumerator$$makeSettledResult;
-
-	    lib$rsvp$hash$settled$$HashSettled.prototype._validationError = function() {
-	      return new Error('hashSettled must be called with an object');
-	    };
-
-	    function lib$rsvp$hash$settled$$hashSettled(object, label) {
-	      return new lib$rsvp$hash$settled$$HashSettled(lib$rsvp$promise$$default, object, label).promise;
-	    }
-	    var lib$rsvp$hash$settled$$default = lib$rsvp$hash$settled$$hashSettled;
-	    function lib$rsvp$hash$$hash(object, label) {
-	      return new lib$rsvp$promise$hash$$default(lib$rsvp$promise$$default, object, label).promise;
-	    }
-	    var lib$rsvp$hash$$default = lib$rsvp$hash$$hash;
-	    function lib$rsvp$map$$map(promises, mapFn, label) {
-	      return lib$rsvp$promise$$default.all(promises, label).then(function(values) {
-	        if (!lib$rsvp$utils$$isFunction(mapFn)) {
-	          throw new TypeError("You must pass a function as map's second argument.");
-	        }
-
-	        var length = values.length;
-	        var results = new Array(length);
-
-	        for (var i = 0; i < length; i++) {
-	          results[i] = mapFn(values[i]);
-	        }
-
-	        return lib$rsvp$promise$$default.all(results, label);
-	      });
-	    }
-	    var lib$rsvp$map$$default = lib$rsvp$map$$map;
-
-	    function lib$rsvp$node$$Result() {
-	      this.value = undefined;
-	    }
-
-	    var lib$rsvp$node$$ERROR = new lib$rsvp$node$$Result();
-	    var lib$rsvp$node$$GET_THEN_ERROR = new lib$rsvp$node$$Result();
-
-	    function lib$rsvp$node$$getThen(obj) {
-	      try {
-	       return obj.then;
-	      } catch(error) {
-	        lib$rsvp$node$$ERROR.value= error;
-	        return lib$rsvp$node$$ERROR;
-	      }
-	    }
-
-
-	    function lib$rsvp$node$$tryApply(f, s, a) {
-	      try {
-	        f.apply(s, a);
-	      } catch(error) {
-	        lib$rsvp$node$$ERROR.value = error;
-	        return lib$rsvp$node$$ERROR;
-	      }
-	    }
-
-	    function lib$rsvp$node$$makeObject(_, argumentNames) {
-	      var obj = {};
-	      var name;
-	      var i;
-	      var length = _.length;
-	      var args = new Array(length);
-
-	      for (var x = 0; x < length; x++) {
-	        args[x] = _[x];
-	      }
-
-	      for (i = 0; i < argumentNames.length; i++) {
-	        name = argumentNames[i];
-	        obj[name] = args[i + 1];
-	      }
-
-	      return obj;
-	    }
-
-	    function lib$rsvp$node$$arrayResult(_) {
-	      var length = _.length;
-	      var args = new Array(length - 1);
-
-	      for (var i = 1; i < length; i++) {
-	        args[i - 1] = _[i];
-	      }
-
-	      return args;
-	    }
-
-	    function lib$rsvp$node$$wrapThenable(then, promise) {
-	      return {
-	        then: function(onFulFillment, onRejection) {
-	          return then.call(promise, onFulFillment, onRejection);
-	        }
-	      };
-	    }
-
-	    function lib$rsvp$node$$denodeify(nodeFunc, options) {
-	      var fn = function() {
-	        var self = this;
-	        var l = arguments.length;
-	        var args = new Array(l + 1);
-	        var arg;
-	        var promiseInput = false;
-
-	        for (var i = 0; i < l; ++i) {
-	          arg = arguments[i];
-
-	          if (!promiseInput) {
-	            // TODO: clean this up
-	            promiseInput = lib$rsvp$node$$needsPromiseInput(arg);
-	            if (promiseInput === lib$rsvp$node$$GET_THEN_ERROR) {
-	              var p = new lib$rsvp$promise$$default(lib$rsvp$$internal$$noop);
-	              lib$rsvp$$internal$$reject(p, lib$rsvp$node$$GET_THEN_ERROR.value);
-	              return p;
-	            } else if (promiseInput && promiseInput !== true) {
-	              arg = lib$rsvp$node$$wrapThenable(promiseInput, arg);
-	            }
-	          }
-	          args[i] = arg;
-	        }
-
-	        var promise = new lib$rsvp$promise$$default(lib$rsvp$$internal$$noop);
-
-	        args[l] = function(err, val) {
-	          if (err)
-	            lib$rsvp$$internal$$reject(promise, err);
-	          else if (options === undefined)
-	            lib$rsvp$$internal$$resolve(promise, val);
-	          else if (options === true)
-	            lib$rsvp$$internal$$resolve(promise, lib$rsvp$node$$arrayResult(arguments));
-	          else if (lib$rsvp$utils$$isArray(options))
-	            lib$rsvp$$internal$$resolve(promise, lib$rsvp$node$$makeObject(arguments, options));
-	          else
-	            lib$rsvp$$internal$$resolve(promise, val);
-	        };
-
-	        if (promiseInput) {
-	          return lib$rsvp$node$$handlePromiseInput(promise, args, nodeFunc, self);
-	        } else {
-	          return lib$rsvp$node$$handleValueInput(promise, args, nodeFunc, self);
-	        }
-	      };
-
-	      fn.__proto__ = nodeFunc;
-
-	      return fn;
-	    }
-
-	    var lib$rsvp$node$$default = lib$rsvp$node$$denodeify;
-
-	    function lib$rsvp$node$$handleValueInput(promise, args, nodeFunc, self) {
-	      var result = lib$rsvp$node$$tryApply(nodeFunc, self, args);
-	      if (result === lib$rsvp$node$$ERROR) {
-	        lib$rsvp$$internal$$reject(promise, result.value);
-	      }
-	      return promise;
-	    }
-
-	    function lib$rsvp$node$$handlePromiseInput(promise, args, nodeFunc, self){
-	      return lib$rsvp$promise$$default.all(args).then(function(args){
-	        var result = lib$rsvp$node$$tryApply(nodeFunc, self, args);
-	        if (result === lib$rsvp$node$$ERROR) {
-	          lib$rsvp$$internal$$reject(promise, result.value);
-	        }
-	        return promise;
-	      });
-	    }
-
-	    function lib$rsvp$node$$needsPromiseInput(arg) {
-	      if (arg && typeof arg === 'object') {
-	        if (arg.constructor === lib$rsvp$promise$$default) {
-	          return true;
-	        } else {
-	          return lib$rsvp$node$$getThen(arg);
-	        }
-	      } else {
-	        return false;
-	      }
-	    }
-	    var lib$rsvp$platform$$platform;
-
-	    /* global self */
-	    if (typeof self === 'object') {
-	      lib$rsvp$platform$$platform = self;
-
-	    /* global global */
-	    } else if (typeof global === 'object') {
-	      lib$rsvp$platform$$platform = global;
-	    } else {
-	      throw new Error('no global: `self` or `global` found');
-	    }
-
-	    var lib$rsvp$platform$$default = lib$rsvp$platform$$platform;
-	    function lib$rsvp$race$$race(array, label) {
-	      return lib$rsvp$promise$$default.race(array, label);
-	    }
-	    var lib$rsvp$race$$default = lib$rsvp$race$$race;
-	    function lib$rsvp$reject$$reject(reason, label) {
-	      return lib$rsvp$promise$$default.reject(reason, label);
-	    }
-	    var lib$rsvp$reject$$default = lib$rsvp$reject$$reject;
-	    function lib$rsvp$resolve$$resolve(value, label) {
-	      return lib$rsvp$promise$$default.resolve(value, label);
-	    }
-	    var lib$rsvp$resolve$$default = lib$rsvp$resolve$$resolve;
-	    function lib$rsvp$rethrow$$rethrow(reason) {
-	      setTimeout(function() {
-	        throw reason;
-	      });
-	      throw reason;
-	    }
-	    var lib$rsvp$rethrow$$default = lib$rsvp$rethrow$$rethrow;
-
-	    // defaults
-	    lib$rsvp$config$$config.async = lib$rsvp$asap$$default;
-	    lib$rsvp$config$$config.after = function(cb) {
-	      setTimeout(cb, 0);
-	    };
-	    var lib$rsvp$$cast = lib$rsvp$resolve$$default;
-	    function lib$rsvp$$async(callback, arg) {
-	      lib$rsvp$config$$config.async(callback, arg);
-	    }
-
-	    function lib$rsvp$$on() {
-	      lib$rsvp$config$$config['on'].apply(lib$rsvp$config$$config, arguments);
-	    }
-
-	    function lib$rsvp$$off() {
-	      lib$rsvp$config$$config['off'].apply(lib$rsvp$config$$config, arguments);
-	    }
-
-	    // Set up instrumentation through `window.__PROMISE_INTRUMENTATION__`
-	    if (typeof window !== 'undefined' && typeof window['__PROMISE_INSTRUMENTATION__'] === 'object') {
-	      var lib$rsvp$$callbacks = window['__PROMISE_INSTRUMENTATION__'];
-	      lib$rsvp$config$$configure('instrument', true);
-	      for (var lib$rsvp$$eventName in lib$rsvp$$callbacks) {
-	        if (lib$rsvp$$callbacks.hasOwnProperty(lib$rsvp$$eventName)) {
-	          lib$rsvp$$on(lib$rsvp$$eventName, lib$rsvp$$callbacks[lib$rsvp$$eventName]);
-	        }
-	      }
-	    }
-
-	    var lib$rsvp$umd$$RSVP = {
-	      'race': lib$rsvp$race$$default,
-	      'Promise': lib$rsvp$promise$$default,
-	      'allSettled': lib$rsvp$all$settled$$default,
-	      'hash': lib$rsvp$hash$$default,
-	      'hashSettled': lib$rsvp$hash$settled$$default,
-	      'denodeify': lib$rsvp$node$$default,
-	      'on': lib$rsvp$$on,
-	      'off': lib$rsvp$$off,
-	      'map': lib$rsvp$map$$default,
-	      'filter': lib$rsvp$filter$$default,
-	      'resolve': lib$rsvp$resolve$$default,
-	      'reject': lib$rsvp$reject$$default,
-	      'all': lib$rsvp$all$$default,
-	      'rethrow': lib$rsvp$rethrow$$default,
-	      'defer': lib$rsvp$defer$$default,
-	      'EventTarget': lib$rsvp$events$$default,
-	      'configure': lib$rsvp$config$$configure,
-	      'async': lib$rsvp$$async
-	    };
-
-	    /* global define:true module:true window: true */
-	    if ("function" === 'function' && __webpack_require__(7)['amd']) {
-	      !(__WEBPACK_AMD_DEFINE_RESULT__ = function() { return lib$rsvp$umd$$RSVP; }.call(exports, __webpack_require__, exports, module), __WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
-	    } else if (typeof module !== 'undefined' && module['exports']) {
-	      module['exports'] = lib$rsvp$umd$$RSVP;
-	    } else if (typeof lib$rsvp$platform$$default !== 'undefined') {
-	      lib$rsvp$platform$$default['RSVP'] = lib$rsvp$umd$$RSVP;
-	    }
-	}).call(this);
-
-	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(9), (function() { return this; }()), __webpack_require__(8)(module)))
-
-/***/ },
-/* 5 */
+/* 10 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* (ignored) */
 
 /***/ },
-/* 6 */
+/* 11 */
+/***/ function(module, exports, __webpack_require__) {
+
+	module.exports = function() { throw new Error("define cannot be used indirect"); };
+
+
+/***/ },
+/* 12 */
+/***/ function(module, exports, __webpack_require__) {
+
+	module.exports = function(module) {
+		if(!module.webpackPolyfill) {
+			module.deprecate = function() {};
+			module.paths = [];
+			// module.parent = undefined by default
+			module.children = [];
+			module.webpackPolyfill = 1;
+		}
+		return module;
+	}
+
+
+/***/ },
+/* 13 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(Buffer, global) {/*!
@@ -21505,9 +21960,9 @@ return /******/ (function(modules) { // webpackBootstrap
 	 */
 	/* eslint-disable no-proto */
 
-	var base64 = __webpack_require__(12)
-	var ieee754 = __webpack_require__(11)
-	var isArray = __webpack_require__(10)
+	var base64 = __webpack_require__(17)
+	var ieee754 = __webpack_require__(15)
+	var isArray = __webpack_require__(16)
 
 	exports.Buffer = Buffer
 	exports.SlowBuffer = SlowBuffer
@@ -23042,33 +23497,10 @@ return /******/ (function(modules) { // webpackBootstrap
 	  return i
 	}
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(6).Buffer, (function() { return this; }())))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(13).Buffer, (function() { return this; }())))
 
 /***/ },
-/* 7 */
-/***/ function(module, exports, __webpack_require__) {
-
-	module.exports = function() { throw new Error("define cannot be used indirect"); };
-
-
-/***/ },
-/* 8 */
-/***/ function(module, exports, __webpack_require__) {
-
-	module.exports = function(module) {
-		if(!module.webpackPolyfill) {
-			module.deprecate = function() {};
-			module.paths = [];
-			// module.parent = undefined by default
-			module.children = [];
-			module.webpackPolyfill = 1;
-		}
-		return module;
-	}
-
-
-/***/ },
-/* 9 */
+/* 14 */
 /***/ function(module, exports, __webpack_require__) {
 
 	// shim for using process in browser
@@ -23132,46 +23564,7 @@ return /******/ (function(modules) { // webpackBootstrap
 
 
 /***/ },
-/* 10 */
-/***/ function(module, exports, __webpack_require__) {
-
-	
-	/**
-	 * isArray
-	 */
-
-	var isArray = Array.isArray;
-
-	/**
-	 * toString
-	 */
-
-	var str = Object.prototype.toString;
-
-	/**
-	 * Whether or not the given `val`
-	 * is an array.
-	 *
-	 * example:
-	 *
-	 *        isArray([]);
-	 *        // > true
-	 *        isArray(arguments);
-	 *        // > false
-	 *        isArray('');
-	 *        // > false
-	 *
-	 * @param {mixed} val
-	 * @return {bool}
-	 */
-
-	module.exports = isArray || function (val) {
-	  return !! val && '[object Array]' == str.call(val);
-	};
-
-
-/***/ },
-/* 11 */
+/* 15 */
 /***/ function(module, exports, __webpack_require__) {
 
 	exports.read = function (buffer, offset, isLE, mLen, nBytes) {
@@ -23261,7 +23654,46 @@ return /******/ (function(modules) { // webpackBootstrap
 
 
 /***/ },
-/* 12 */
+/* 16 */
+/***/ function(module, exports, __webpack_require__) {
+
+	
+	/**
+	 * isArray
+	 */
+
+	var isArray = Array.isArray;
+
+	/**
+	 * toString
+	 */
+
+	var str = Object.prototype.toString;
+
+	/**
+	 * Whether or not the given `val`
+	 * is an array.
+	 *
+	 * example:
+	 *
+	 *        isArray([]);
+	 *        // > true
+	 *        isArray(arguments);
+	 *        // > false
+	 *        isArray('');
+	 *        // > false
+	 *
+	 * @param {mixed} val
+	 * @return {bool}
+	 */
+
+	module.exports = isArray || function (val) {
+	  return !! val && '[object Array]' == str.call(val);
+	};
+
+
+/***/ },
+/* 17 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
