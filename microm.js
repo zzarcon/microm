@@ -3,6 +3,9 @@ var RecordRTC = require("./bower_components/recordrtc/RecordRTC.js");
 var Promise = require('rsvp').Promise;
 var Converter = require('./lib/converter');
 var Player = require('./lib/player');
+var config = require('./lib/config');
+
+config.setup();
 
 class Microm {
   constructor() {
@@ -40,6 +43,7 @@ class Microm {
     if (this.isPlaying) return;
 
     this.isPlaying = true;
+    this.player.play();
   }
 
   pause(currentTime) {
