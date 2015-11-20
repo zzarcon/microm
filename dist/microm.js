@@ -101,6 +101,8 @@ return /******/ (function(modules) { // webpackBootstrap
 	          self.getMp3().then(function (mp3) {
 	            self.mp3 = mp3;
 	            self.player = new Player(mp3.url);
+
+	            resolve(mp3);
 	          });
 	        });
 	      });
@@ -119,6 +121,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	      if (!this.isPlaying) return;
 
 	      this.isPlaying = false;
+	      this.player.pause();
 	    }
 	  }, {
 	    key: "stop",
@@ -129,6 +132,13 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	      this.isPlaying && this.pause(0);
 	    }
+
+	    /**
+	     * Returns all mp3 info.
+	     * Right now we are converting the recorded data
+	     * everytime this function it's called.
+	     * @return {Promise} 
+	     */
 	  }, {
 	    key: "getMp3",
 	    value: function getMp3() {
@@ -139,6 +149,50 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }, {
 	    key: "getWav",
 	    value: function getWav() {}
+	  }, {
+	    key: "getUrl",
+	    value: function getUrl() {
+	      // TODO: trow error if mp3 is not ready
+	      return this.mp3.url;
+	    }
+	  }, {
+	    key: "getBlob",
+	    value: function getBlob() {
+	      // TODO: trow error if mp3 is not ready
+	      return this.mp3.blob;
+	    }
+	  }, {
+	    key: "getBuffer",
+	    value: function getBuffer() {
+	      // TODO: trow error if mp3 is not ready
+	      return this.mp3.buffer;
+	    }
+	  }, {
+	    key: "getBase64",
+	    value: function getBase64() {
+	      // TODO: trow error if mp3 is not ready
+	      return this.converter.toBase64(this.getBlob());
+	    }
+
+	    /**
+	     * Forces file download
+	     * @param  {String} fileName 
+	     * @return {void}
+	     */
+	  }, {
+	    key: "download",
+	    value: function download() {
+	      var fileName = arguments.length <= 0 || arguments[0] === undefined ? 'micro_record' : arguments[0];
+
+	      var link = document.createElement('a');
+	      var click = document.createEvent("Event");
+
+	      link.href = this.getUrl();
+	      link.download = fileName + ".mp3";
+
+	      click.initEvent("click", true, true);
+	      link.dispatchEvent(click);
+	    }
 	  }, {
 	    key: "startUserMedia",
 	    value: function startUserMedia(stream) {
@@ -172,7 +226,7 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	var Lame = __webpack_require__(8);
 	var Promise = __webpack_require__(6).Promise;
-	var extend = __webpack_require__(9);
+	var extend = __webpack_require__(10);
 
 	var defaultEncodeOptions = {
 	  channels: 1,
@@ -193,16 +247,28 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }
 
 	  _createClass(Converter, [{
+	    key: 'toBase64',
+	    value: function toBase64(blob) {
+	      var reader = new FileReader();
+	      reader.readAsDataURL(blob);
+
+	      return new Promise(function (resolve, reject) {
+	        reader.onload = function () {
+	          resolve(reader.result);
+	        };
+	      });
+	    }
+	  }, {
 	    key: 'toMp3',
 	    value: function toMp3(blob) {
 	      var _this = this;
 
-	      var fileReader = new FileReader();
-	      fileReader.readAsArrayBuffer(blob);
+	      var reader = new FileReader();
+	      reader.readAsArrayBuffer(blob);
 
 	      return new Promise(function (resolve, reject) {
 	        _this.mp3Resolver = resolve;
-	        fileReader.onload = _this.onBlobReady.bind(fileReader, _this);
+	        reader.onload = _this.onBlobReady.bind(reader, _this);
 	      });
 	    }
 	  }, {
@@ -268,7 +334,6 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	      data.length > 0 && buffer.push(new Int8Array(data));
 
-	      // TODO: add feature arrayBufferToBase64 https://github.com/zzarcon/ember-meme-generator/blob/master/app/controllers/application.js#L34-L43
 	      blob = new Blob(buffer, { type: 'audio/mp3' });
 	      url = URL.createObjectURL(blob);
 
@@ -277,8 +342,6 @@ return /******/ (function(modules) { // webpackBootstrap
 	        blob: blob,
 	        url: url
 	      });
-	      // TODO: add events
-	      // this.addEvents()
 	    }
 	  }]);
 
@@ -5825,7 +5888,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	    function lib$rsvp$asap$$attemptVertex() {
 	      try {
 	        var r = require;
-	        var vertx = __webpack_require__(10);
+	        var vertx = __webpack_require__(9);
 	        lib$rsvp$asap$$vertxNext = vertx.runOnLoop || vertx.runOnContext;
 	        return lib$rsvp$asap$$useVertxTimer();
 	      } catch(e) {
@@ -21831,6 +21894,12 @@ return /******/ (function(modules) { // webpackBootstrap
 /* 9 */
 /***/ function(module, exports, __webpack_require__) {
 
+	/* (ignored) */
+
+/***/ },
+/* 10 */
+/***/ function(module, exports, __webpack_require__) {
+
 	'use strict';
 
 	var hasOwn = Object.prototype.hasOwnProperty;
@@ -21920,12 +21989,6 @@ return /******/ (function(modules) { // webpackBootstrap
 
 
 /***/ },
-/* 10 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/* (ignored) */
-
-/***/ },
 /* 11 */
 /***/ function(module, exports, __webpack_require__) {
 
@@ -21961,8 +22024,8 @@ return /******/ (function(modules) { // webpackBootstrap
 	/* eslint-disable no-proto */
 
 	var base64 = __webpack_require__(17)
-	var ieee754 = __webpack_require__(15)
-	var isArray = __webpack_require__(16)
+	var ieee754 = __webpack_require__(16)
+	var isArray = __webpack_require__(15)
 
 	exports.Buffer = Buffer
 	exports.SlowBuffer = SlowBuffer
@@ -23567,6 +23630,45 @@ return /******/ (function(modules) { // webpackBootstrap
 /* 15 */
 /***/ function(module, exports, __webpack_require__) {
 
+	
+	/**
+	 * isArray
+	 */
+
+	var isArray = Array.isArray;
+
+	/**
+	 * toString
+	 */
+
+	var str = Object.prototype.toString;
+
+	/**
+	 * Whether or not the given `val`
+	 * is an array.
+	 *
+	 * example:
+	 *
+	 *        isArray([]);
+	 *        // > true
+	 *        isArray(arguments);
+	 *        // > false
+	 *        isArray('');
+	 *        // > false
+	 *
+	 * @param {mixed} val
+	 * @return {bool}
+	 */
+
+	module.exports = isArray || function (val) {
+	  return !! val && '[object Array]' == str.call(val);
+	};
+
+
+/***/ },
+/* 16 */
+/***/ function(module, exports, __webpack_require__) {
+
 	exports.read = function (buffer, offset, isLE, mLen, nBytes) {
 	  var e, m
 	  var eLen = nBytes * 8 - mLen - 1
@@ -23651,45 +23753,6 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	  buffer[offset + i - d] |= s * 128
 	}
-
-
-/***/ },
-/* 16 */
-/***/ function(module, exports, __webpack_require__) {
-
-	
-	/**
-	 * isArray
-	 */
-
-	var isArray = Array.isArray;
-
-	/**
-	 * toString
-	 */
-
-	var str = Object.prototype.toString;
-
-	/**
-	 * Whether or not the given `val`
-	 * is an array.
-	 *
-	 * example:
-	 *
-	 *        isArray([]);
-	 *        // > true
-	 *        isArray(arguments);
-	 *        // > false
-	 *        isArray('');
-	 *        // > false
-	 *
-	 * @param {mixed} val
-	 * @return {bool}
-	 */
-
-	module.exports = isArray || function (val) {
-	  return !! val && '[object Array]' == str.call(val);
-	};
 
 
 /***/ },
