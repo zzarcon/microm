@@ -151,6 +151,27 @@ Blob enconded as Wav.
 
 Returns **Blob** 
 
+# off
+
+Remove an event handler
+
+**Parameters**
+
+-   `eventName` **String** 
+
+Returns **void** 
+
+# on
+
+Attach an event handler function for event name
+
+**Parameters**
+
+-   `eventName` **String** 
+-   `handler` **Function** 
+
+Returns **void** 
+
 # pause
 
 Pauses the player.
