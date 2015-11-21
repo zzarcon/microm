@@ -1,0 +1,23 @@
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Microm tests</title>
+    <link rel="stylesheet" href="../node_modules/mocha/mocha.css" />
+  </head>
+  <body>
+    <div id="mocha"></div>
+    <script src="../node_modules/mocha/mocha.js"></script>
+    <script src="../node_modules/chai/chai.js"></script>
+    <script src="../bower_components/zepto/zepto.min.js"></script>
+    <script src="../dist/microm.js"></script>    
+    <script>
+      mocha.ui('bdd');
+      mocha.reporter('html');
+      mocha.timeout(15 * 1000);
+    </script>
+    <script src="specs.js"></script>
+    <script>
+      window.mochaPhantomJS ? mochaPhantomJS.run() : mocha.run();
+    </script>
+  </body>
+</html>
