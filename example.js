@@ -93,7 +93,7 @@
     microm.download('microm');
   }
 
-  function $(selector) {
+  function $(selector) {
     return document.querySelector(selector);
   }
 
