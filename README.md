@@ -1,12 +1,19 @@
 [![Build Status](https://travis-ci.org/zzarcon/microm.svg)](https://travis-ci.org/zzarcon/microm)
 [![npm version](https://badge.fury.io/js/microm.svg)](https://badge.fury.io/js/microm)
 [![Bower version](https://badge.fury.io/bo/microm.svg)](http://badge.fury.io/bo/microm)
-
+[DEMO](http://zzarcon.github.io/microm)
 # Microm
 
 > Beautiful library to convert browser microphone to mp3 in Javascript
 
 Microm it's just a wrapper of few audio converting libraries which exposes a fully **Promise** and **Event oriented** api. Microm goal it's to make trivial to **play and convert audio** in the browser.
+
+# Installation
+`$ npm install microm`
+
+or
+
+`$ bower install microm`
 
 # Usage
 

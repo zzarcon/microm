@@ -1,6 +1,6 @@
 {
   "name": "microm",
-  "main": "microm.js",
+  "main": "dist/microm.js",
   "version": "0.1.4",
   "homepage": "https://github.com/zzarcon/microm",
   "authors": [
@@ -8,11 +8,17 @@
   ],
   "license": "MIT",
   "ignore": [
-    "**/.*",
+    ".travis.yml",
+    "example.js",
+    "index.html",
+    "microm.js",
+    "package.json",
+    "README.md",
+    "webpack.config.js",
     "node_modules",
     "bower_components",
     "test",
-    "tests"
+    "md"
   ],
   "dependencies": {
     "lamejs": "git://github.com/zzarcon/lamejs.git#master",

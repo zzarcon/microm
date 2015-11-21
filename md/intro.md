@@ -8,6 +8,13 @@
 
 Microm it's just a wrapper of few audio converting libraries which exposes a fully **Promise** and **Event oriented** api. Microm goal it's to make trivial to **play and convert audio** in the browser.
 
+# Installation
+`$ npm install microm`
+
+or
+
+`$ bower install microm`
+
 # Usage
 
 **Recording and converting the user microphone**
