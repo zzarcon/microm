@@ -1,44 +1,51 @@
 (function() {
   window.onload = ready;
   window.microm = null;
+  var status, currentTime, duration;
 
   function ready() {
     window.microm = new Microm();
+    
+    status = $('#status span');
+    currentTime = $('#current-time span');
+    duration = $('#duration span');
 
+    // Microm events
     microm.on('timeupdate', updateCurrentTime);
     microm.on('loadedmetadata', onLoaded);
     microm.on('play', onPlayEvent);
     microm.on('pause', onPauseEvent);
     microm.on('ended', onEndEvent);
 
-    document.querySelector('#record').addEventListener('click', onRecord);
-    document.querySelector('#play').addEventListener('click', onPlay);
-    document.querySelector('#pause').addEventListener('click', onPause);
-    document.querySelector('#stop').addEventListener('click', onStop);
-    document.querySelector('#get-mp3').addEventListener('click', onGetMp3);
-    document.querySelector('#get-wav').addEventListener('click', onGetWav);
-    document.querySelector('#get-base64').addEventListener('click', onGetBase64);
-    document.querySelector('#download').addEventListener('click', onDownload);
+    // DOM element events
+    click('#record', onRecord);
+    click('#play', onPlay);
+    click('#pause', onPause);
+    click('#stop', onStop);
+    click('#get-mp3', onGetMp3);
+    click('#get-wav', onGetWav);
+    click('#get-base64', onGetBase64);
+    click('#download', onDownload);
   }
 
-  function onLoaded(duration) {
-    console.log('onLoaded', duration);
+  function onLoaded(time) {
+    duration.innerHTML = time;
   }
   
-  function updateCurrentTime(currentTime) {
-    console.log('currentTime', currentTime);
+  function updateCurrentTime(time) {
+    currentTime.innerHTML = time;
   }
   
   function onPlayEvent() {
-    console.log('onPauseEvent');
+    status.innerHTML = 'Playing';
   }
   
   function onPauseEvent(currentTime) {
-    console.log('onPauseEvent', currentTime);
+    status.innerHTML = 'Paused';
   }
   
   function onEndEvent() {
-    console.log('onEndEvent');
+    status.innerHTML = 'Ended';
   }
   
   function onRecord() {
@@ -84,5 +91,13 @@
   
   function onDownload() {
     microm.download('microm');
+  }
+
+  function $(selector) {
+    return document.querySelector(selector);
+  }
+
+  function click(selector, callback) {
+    $(selector).addEventListener('click', callback);
   }
 })();
