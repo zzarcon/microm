@@ -11,6 +11,7 @@
     document.querySelector('#stop').addEventListener('click', onStop);
     document.querySelector('#get-mp3').addEventListener('click', onGetMp3);
     document.querySelector('#get-wav').addEventListener('click', onGetWav);
+    document.querySelector('#get-base64').addEventListener('click', onGetBase64);
     document.querySelector('#download').addEventListener('click', onDownload);
   }
 
@@ -42,6 +43,11 @@
   function onGetWav() {
     console.log('onGetWav');
     microm.getWav();
+  }
+  function onGetBase64() {
+    microm.getBase64().then(function(base64string) {
+      console.log(base64string);
+    });
   }
   function onDownload() {
     microm.download('microm');
