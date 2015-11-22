@@ -202,6 +202,18 @@ class Microm {
   }
 
   /**
+   * Attach an event handler function to be called once for event name
+   * @param  {String} eventName
+   * @param  {Function} handler
+   * @return {void}
+   */
+  once(eventName, handler) {
+    this.eventListeners[eventName] = () => {
+      handler();
+      this.off(eventName);
+    }
+  }
+  /**
    * Remove an event handler
    * @param  {String} eventName 
    * @return {void}           
