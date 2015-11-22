@@ -53,6 +53,38 @@ function download() {
 }
 ```
 
+**Reacting to events**
+
+```javascript
+microm.on('timeupdate', updateCurrentTime);
+microm.on('loadedmetadata', onLoaded);
+microm.on('play', onPlayEvent);
+microm.on('pause', onPauseEvent);
+microm.on('ended', onEndEvent);
+
+function onLoaded(time) {
+  duration.innerHTML = time;
+}
+
+function updateCurrentTime(time) {
+  currentTime.innerHTML = time;
+}
+
+function onPlayEvent() {
+  status.innerHTML = 'Playing';
+}
+
+function onPauseEvent(time) {
+  status.innerHTML = 'Paused';
+}
+
+function onEndEvent() {
+  status.innerHTML = 'Ended';
+}
+
+```
+
+
 **Upload mp3 to the server**
 
 ```javascript
@@ -85,13 +117,14 @@ microm.getBase64().then(function(base64string) {
   And finally to provide a Promise based Api we use **RSVP** which support the [Promises/A+](https://promisesaplus.com/) and have a great support.
 
 # Browser support
+  The library just work in **Chrome** and **Firefox** right now. More info:
 
-  getUserMedia deprecation 
-  navigator.mediaDevices.getUserMedia
-
-  *Safari...
-  *IE...
-
+  * [Caniuse Stream](http://caniuse.com/#feat=stream)
+  * [Caniuse WebRTC](http://caniuse.com/#feat=rtcpeerconnection)
+  * [navigator.getUserMedia deprecation](https://developer.mozilla.org/en/docs/Web/API/Navigator/getUserMedia)
+  * [navigator.mediaDevices.getUserMedia](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)
+  * [Safari is the new IE](https://news.ycombinator.com/item?id=9804533)
+  
 # Api reference
 
 # download

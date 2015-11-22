@@ -18,7 +18,8 @@
     "node_modules",
     "bower_components",
     "test",
-    "md"
+    "md",
+    "lib"
   ],
   "dependencies": {
     "lamejs": "git://github.com/zzarcon/lamejs.git#master",
