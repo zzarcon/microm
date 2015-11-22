@@ -95,7 +95,7 @@ Reproduce the player audio.
 
 Returns **void** 
 
-# startRecording
+# record
 
 Request browser microphone access and waits for it resolution.
 If the user grant access, Microm will start recording the audio.

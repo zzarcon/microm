@@ -49,7 +49,7 @@
   }
   
   function onRecord() {
-    microm.startRecording().then(function() {
+    microm.record().then(function() {
       console.log('recording...')
     }).catch(function() {
       console.log('error recording');

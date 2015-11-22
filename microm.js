@@ -23,7 +23,7 @@ class Microm {
    * 
    * @return {Promise} 
    */
-  startRecording() {
+  record() {
     this.isRecording = true;
     var media = navigator.mediaDevices.getUserMedia({audio: true})
 
@@ -81,7 +81,11 @@ class Microm {
       return this.stopRecording();
     }
 
-    this.player.stop();
+    return new Promise((resolve, reject) => {
+      this.player.stop();
+
+      resolve(this.mp3);
+    });
   }
 
   /**
