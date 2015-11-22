@@ -10,7 +10,6 @@ config.setup();
 class Microm {
   constructor() {
     this.isRecording = false;
-    this.isPlaying = false;
     this.recordRTC = null;
     this.player = null;
     this.mp3 = null;
@@ -54,9 +53,6 @@ class Microm {
    * @return {void}
    */
   play() {
-    if (this.isPlaying) return;
-
-    this.isPlaying = true;
     this.player.play();
   }
 
@@ -66,9 +62,6 @@ class Microm {
    * @return {void}
    */
   pause() {
-    if (!this.isPlaying) return;
-
-    this.isPlaying = false;
     this.player.pause();
   }
 
@@ -88,7 +81,7 @@ class Microm {
       return this.stopRecording();
     }
 
-    this.isPlaying && this.player.stop();
+    this.player.stop();
   }
 
   /**
