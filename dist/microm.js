@@ -74,7 +74,6 @@ return /******/ (function(modules) { // webpackBootstrap
 	    _classCallCheck(this, Microm);
 
 	    this.isRecording = false;
-	    this.isPlaying = false;
 	    this.recordRTC = null;
 	    this.player = null;
 	    this.mp3 = null;
@@ -124,9 +123,6 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }, {
 	    key: "play",
 	    value: function play() {
-	      if (this.isPlaying) return;
-
-	      this.isPlaying = true;
 	      this.player.play();
 	    }
 
@@ -138,9 +134,6 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }, {
 	    key: "pause",
 	    value: function pause() {
-	      if (!this.isPlaying) return;
-
-	      this.isPlaying = false;
 	      this.player.pause();
 	    }
 
@@ -162,7 +155,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	        return this.stopRecording();
 	      }
 
-	      this.isPlaying && this.player.stop();
+	      this.player.stop();
 	    }
 
 	    /**
@@ -326,7 +319,7 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	var Lame = __webpack_require__(8);
 	var Promise = __webpack_require__(6).Promise;
-	var extend = __webpack_require__(9);
+	var extend = __webpack_require__(10);
 
 	var defaultEncodeOptions = {
 	  channels: 1,
@@ -6012,7 +6005,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	    function lib$rsvp$asap$$attemptVertex() {
 	      try {
 	        var r = require;
-	        var vertx = __webpack_require__(10);
+	        var vertx = __webpack_require__(9);
 	        lib$rsvp$asap$$vertxNext = vertx.runOnLoop || vertx.runOnContext;
 	        return lib$rsvp$asap$$useVertxTimer();
 	      } catch(e) {
@@ -22023,6 +22016,12 @@ return /******/ (function(modules) { // webpackBootstrap
 /* 9 */
 /***/ function(module, exports, __webpack_require__) {
 
+	/* (ignored) */
+
+/***/ },
+/* 10 */
+/***/ function(module, exports, __webpack_require__) {
+
 	'use strict';
 
 	var hasOwn = Object.prototype.hasOwnProperty;
@@ -22110,12 +22109,6 @@ return /******/ (function(modules) { // webpackBootstrap
 	};
 
 
-
-/***/ },
-/* 10 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/* (ignored) */
 
 /***/ },
 /* 11 */

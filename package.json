@@ -1,6 +1,6 @@
 {
   "name": "microm",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Beautiful library to convert browser microphone to mp3 in Javascript",
   "main": "./dist/microm.js",
   "scripts": {
