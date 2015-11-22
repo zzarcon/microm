@@ -50,7 +50,7 @@
   
   function onRecord() {
     microm.record().then(function() {
-      console.log('recording...')
+      status.innerHTML = 'Recording';
     }).catch(function() {
       console.log('error recording');
     })
@@ -68,7 +68,7 @@
   
   function onStop() {
     microm.stop().then(function(mp3) {
-      console.log('onStop', mp3);
+      status.innerHTML = 'Paused';
     });
   }
   
