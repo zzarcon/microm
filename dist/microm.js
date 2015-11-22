@@ -89,8 +89,8 @@ return /******/ (function(modules) { // webpackBootstrap
 	   */
 
 	  _createClass(Microm, [{
-	    key: "startRecording",
-	    value: function startRecording() {
+	    key: "record",
+	    value: function record() {
 	      this.isRecording = true;
 	      var media = navigator.mediaDevices.getUserMedia({ audio: true });
 
@@ -151,11 +151,17 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }, {
 	    key: "stop",
 	    value: function stop() {
+	      var _this = this;
+
 	      if (this.isRecording) {
 	        return this.stopRecording();
 	      }
 
-	      this.player.stop();
+	      return new Promise(function (resolve, reject) {
+	        _this.player.stop();
+
+	        resolve(_this.mp3);
+	      });
 	    }
 
 	    /**
