@@ -1,3 +1,4 @@
+var EventEmitter = require('events').EventEmitter;
 var adapter = require("./bower_components/webrtc-adapter/adapter.js");
 var RecordRTC = require("./bower_components/recordrtc/RecordRTC.js");
 var Promise = require('rsvp').Promise;
@@ -7,13 +8,13 @@ var config = require('./lib/config');
 
 config.setup();
 
-class Microm {
+class Microm extends EventEmitter {
   constructor() {
+    super();
     this.isRecording = false;
     this.recordRTC = null;
     this.player = null;
     this.mp3 = null;
-    this.eventListeners = {};
     this.converter = new Converter();
   }
 
@@ -190,26 +191,6 @@ class Microm {
     // TODO: Handle recording error
   }
 
-  /**
-   * Attach an event handler function for event name
-   * @param  {String} eventName 
-   * @param  {Function} handler   
-   * @return {void} 
-   */
-  on(eventName, handler) {
-    // TODO: trow error if type of handler is not a function
-    this.eventListeners[eventName] = handler;
-  }
-
-  /**
-   * Remove an event handler
-   * @param  {String} eventName 
-   * @return {void}           
-   */
-  off(eventName) {
-    //TODO: Warn if there's not eventName attached
-    delete this.eventListeners[eventName];
-  }
 }
 
 module.exports = Microm;
