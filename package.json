@@ -10,7 +10,7 @@
     "dev": "webpack-dev-server --progress --colors --port 8090",
     "watch": "webpack --progress --colors --watch",
     "docs": "./node_modules/.bin/documentation microm.js --name -f md -o md/docs.md --shallow && cat md/intro.md > README.md && cat md/docs.md >> README.md",
-    "build": "node_modules/webpack/bin/webpack.js",
+    "build": "webpack && webpack -p --output-file microm.min.js",
     "amend": "git add . && git commit --amend --reuse-message=HEAD",
     "push": "git push --tags && git push",
     "release": "bower version patch -f && npm version patch --force --no-git-tag-version && npm run build && npm run amend && npm run push && npm publish"
