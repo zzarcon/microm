@@ -25,7 +25,7 @@ class Microm {
    */
   record() {
     this.isRecording = true;
-    var media = navigator.mediaDevices.getUserMedia({audio: true})
+    var media = navigator.mediaDevices.getUserMedia({audio: true});
 
     media.then(this.startUserMedia.bind(this)).catch(this.onUserMediaError.bind(this));    
     return media;
@@ -179,7 +179,7 @@ class Microm {
   }
 
   startUserMedia(stream) {
-    var recordRTC = RecordRTC(stream, {type: 'audio'})
+    var recordRTC = RecordRTC(stream, {type: 'audio'});
     recordRTC.startRecording();
       
     this.recordRTC = recordRTC;
@@ -211,5 +211,7 @@ class Microm {
     delete this.eventListeners[eventName];
   }
 }
+
+Microm.Player = Player;
 
 module.exports = Microm;
