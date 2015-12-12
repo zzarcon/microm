@@ -51,8 +51,8 @@
   function onRecord() {
     microm.record().then(function() {
       status.innerHTML = 'Recording';
-    }).catch(function() {
-      console.log('error recording');
+    }).catch(function(error) {
+      console.log('error recording', error);
     })
   }
   
