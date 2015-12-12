@@ -22216,8 +22216,8 @@ return /******/ (function(modules) { // webpackBootstrap
 	/* eslint-disable no-proto */
 
 	var base64 = __webpack_require__(17)
-	var ieee754 = __webpack_require__(16)
-	var isArray = __webpack_require__(15)
+	var ieee754 = __webpack_require__(15)
+	var isArray = __webpack_require__(16)
 
 	exports.Buffer = Buffer
 	exports.SlowBuffer = SlowBuffer
@@ -23758,45 +23758,6 @@ return /******/ (function(modules) { // webpackBootstrap
 /* 15 */
 /***/ function(module, exports, __webpack_require__) {
 
-	
-	/**
-	 * isArray
-	 */
-
-	var isArray = Array.isArray;
-
-	/**
-	 * toString
-	 */
-
-	var str = Object.prototype.toString;
-
-	/**
-	 * Whether or not the given `val`
-	 * is an array.
-	 *
-	 * example:
-	 *
-	 *        isArray([]);
-	 *        // > true
-	 *        isArray(arguments);
-	 *        // > false
-	 *        isArray('');
-	 *        // > false
-	 *
-	 * @param {mixed} val
-	 * @return {bool}
-	 */
-
-	module.exports = isArray || function (val) {
-	  return !! val && '[object Array]' == str.call(val);
-	};
-
-
-/***/ },
-/* 16 */
-/***/ function(module, exports, __webpack_require__) {
-
 	exports.read = function (buffer, offset, isLE, mLen, nBytes) {
 	  var e, m
 	  var eLen = nBytes * 8 - mLen - 1
@@ -23881,6 +23842,45 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	  buffer[offset + i - d] |= s * 128
 	}
+
+
+/***/ },
+/* 16 */
+/***/ function(module, exports, __webpack_require__) {
+
+	
+	/**
+	 * isArray
+	 */
+
+	var isArray = Array.isArray;
+
+	/**
+	 * toString
+	 */
+
+	var str = Object.prototype.toString;
+
+	/**
+	 * Whether or not the given `val`
+	 * is an array.
+	 *
+	 * example:
+	 *
+	 *        isArray([]);
+	 *        // > true
+	 *        isArray(arguments);
+	 *        // > false
+	 *        isArray('');
+	 *        // > false
+	 *
+	 * @param {mixed} val
+	 * @return {bool}
+	 */
+
+	module.exports = isArray || function (val) {
+	  return !! val && '[object Array]' == str.call(val);
+	};
 
 
 /***/ },
