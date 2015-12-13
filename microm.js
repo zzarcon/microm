@@ -97,7 +97,7 @@ class Microm {
    */
   getMp3() {
     var blob = this.recordRTC.getBlob();
-    // TODO: trow error if we don't have recordedData yet
+    // TODO: throw error if we don't have recordedData yet
     return this.converter.toMp3(blob);
   }
 
@@ -121,7 +121,7 @@ class Microm {
    * @return {String} 
    */
   getUrl() {
-    // TODO: trow error if mp3 is not ready
+    // TODO: throw error if mp3 is not ready
     return this.mp3.url;
   }
 
@@ -131,7 +131,7 @@ class Microm {
    * @return {Blob} 
    */
   getBlob() {
-    // TODO: trow error if mp3 is not ready
+    // TODO: throw error if mp3 is not ready
     return this.mp3.blob;
   }
 
@@ -141,7 +141,7 @@ class Microm {
    * @return {ArrayBuffer} 
    */
   getBuffer() {
-    // TODO: trow error if mp3 is not ready
+    // TODO: throw error if mp3 is not ready
     return this.mp3.buffer;
   }
 
@@ -156,7 +156,7 @@ class Microm {
    * @return {Promise}
    */
   getBase64() {
-    // TODO: trow error if mp3 is not ready
+    // TODO: throw error if mp3 is not ready
     return this.converter.toBase64(this.getBlob());
   }
 
@@ -197,7 +197,7 @@ class Microm {
    * @return {void} 
    */
   on(eventName, handler) {
-    // TODO: trow error if type of handler is not a function
+    // TODO: throw error if type of handler is not a function
     this.eventListeners[eventName] = handler;
   }
 
