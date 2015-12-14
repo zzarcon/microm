@@ -1,7 +1,7 @@
 [![Build Status](https://travis-ci.org/zzarcon/microm.svg)](https://travis-ci.org/zzarcon/microm)
 [![npm version](https://badge.fury.io/js/microm.svg)](https://badge.fury.io/js/microm)
 [![Bower version](https://badge.fury.io/bo/microm.svg)](http://badge.fury.io/bo/microm)
-[DEMO](http://zzarcon.github.io/microm)
+[DEMO](https://zzarcon.github.io/microm)
 # Microm
 
 > Beautiful library to convert browser microphone to mp3 in Javascript
