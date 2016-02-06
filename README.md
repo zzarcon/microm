@@ -26,7 +26,7 @@ start();
 setTimeout(stop, 1500);
 
 function start() {
-  microm.startRecording().then(function() {
+  microm.record().then(function() {
     console.log('recording...')
   }).catch(function() {
     console.log('error recording');
