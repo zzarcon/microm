@@ -296,6 +296,23 @@ return /******/ (function(modules) { // webpackBootstrap
 	    }
 
 	    /**
+	     * Attach an event handler function to be called once for event name
+	     * @param  {String} eventName
+	     * @param  {Function} handler
+	     * @return {void}
+	     */
+	  }, {
+	    key: "once",
+	    value: function once(eventName, handler) {
+	      var _this2 = this;
+
+	      this.eventListeners[eventName] = function () {
+	        handler();
+	        _this2.off(eventName);
+	      };
+	    }
+
+	    /**
 	     * Remove an event handler
 	     * @param  {String} eventName 
 	     * @return {void}           
