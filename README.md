@@ -127,7 +127,7 @@ microm.getBase64().then(function(base64string) {
   
 # Api reference
 
-# download
+#### download
 
 Forces file download.
 
@@ -137,7 +137,7 @@ Forces file download.
 
 Returns **void** 
 
-# getBase64
+#### getBase64
 
 Base64 value of the recorded data.
 
@@ -151,19 +151,19 @@ microm.getBase64().then(function(base64) {
 
 Returns **Promise** 
 
-# getBlob
+#### getBlob
 
 Blob value of the recorded data.
 
 Returns **Blob** 
 
-# getBuffer
+#### getBuffer
 
 ArrayBuffer of the recorded data (raw binary data buffer).
 
 Returns **ArrayBuffer** 
 
-# getMp3
+#### getMp3
 
 Returns all mp3 info.
 Right now we are converting the recorded data
@@ -171,7 +171,7 @@ everytime this function it's called.
 
 Returns **Promise** 
 
-# getUrl
+#### getUrl
 
 Link to the mp3.
 It can be used as a audio "src" value
@@ -185,13 +185,13 @@ microm.getUrl();
 
 Returns **String** 
 
-# getWav
+#### getWav
 
 Blob enconded as Wav.
 
 Returns **Blob** 
 
-# off
+#### off
 
 Remove an event handler
 
@@ -201,7 +201,7 @@ Remove an event handler
 
 Returns **void** 
 
-# on
+#### on
 
 Attach an event handler function for event name
 
@@ -212,26 +212,26 @@ Attach an event handler function for event name
 
 Returns **void** 
 
-# pause
+#### pause
 
 Pauses the player.
 
 Returns **void** 
 
-# play
+#### play
 
 Reproduce the player audio.
 
 Returns **void** 
 
-# record
+#### record
 
 Request browser microphone access and waits for it resolution.
 If the user grant access, Microm will start recording the audio.
 
 Returns **Promise** 
 
-# stop
+#### stop
 
 Stops recording audio if Micron is recording, if not
 just pauses the player and set's the currentTime to 0.
