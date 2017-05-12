@@ -184,6 +184,8 @@ class Microm {
       
     this.recordRTC = recordRTC;
     this.isRecording = true;
+
+    return stream;
   }
 
   onUserMediaError() {
