@@ -175,7 +175,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	    key: "getMp3",
 	    value: function getMp3() {
 	      var blob = this.recordRTC.getBlob();
-	      // TODO: trow error if we don't have recordedData yet
+	      // TODO: throw error if we don't have recordedData yet
 	      return this.converter.toMp3(blob);
 	    }
 
@@ -201,7 +201,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }, {
 	    key: "getUrl",
 	    value: function getUrl() {
-	      // TODO: trow error if mp3 is not ready
+	      // TODO: throw error if mp3 is not ready
 	      return this.mp3.url;
 	    }
 
@@ -213,7 +213,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }, {
 	    key: "getBlob",
 	    value: function getBlob() {
-	      // TODO: trow error if mp3 is not ready
+	      // TODO: throw error if mp3 is not ready
 	      return this.mp3.blob;
 	    }
 
@@ -225,7 +225,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }, {
 	    key: "getBuffer",
 	    value: function getBuffer() {
-	      // TODO: trow error if mp3 is not ready
+	      // TODO: throw error if mp3 is not ready
 	      return this.mp3.buffer;
 	    }
 
@@ -242,7 +242,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }, {
 	    key: "getBase64",
 	    value: function getBase64() {
-	      // TODO: trow error if mp3 is not ready
+	      // TODO: throw error if mp3 is not ready
 	      return this.converter.toBase64(this.getBlob());
 	    }
 
@@ -275,6 +275,8 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	      this.recordRTC = recordRTC;
 	      this.isRecording = true;
+
+	      return stream;
 	    }
 	  }, {
 	    key: "onUserMediaError",
@@ -291,7 +293,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }, {
 	    key: "on",
 	    value: function on(eventName, handler) {
-	      // TODO: trow error if type of handler is not a function
+	      // TODO: throw error if type of handler is not a function
 	      this.eventListeners[eventName] = handler;
 	    }
 
@@ -420,8 +422,8 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	      while (remaining >= maxSamples) {
 	        i += maxSamples;
-	        ld = left.splice(i, i + maxSamples);
-	        rd = right ? right.splice(i, i + maxSamples) : null;
+	        ld = left.slice(i, i + maxSamples);
+	        rd = right ? right.slice(i, i + maxSamples) : null;
 	        mp3buf = mp3enc.encodeBuffer(ld, rd);
 
 	        mp3buf.length > 0 && buffer.push(new Int8Array(mp3buf));
@@ -610,7 +612,7 @@ return /******/ (function(modules) { // webpackBootstrap
 /***/ function(module, exports, __webpack_require__) {
 
 	/*
-	 *  Copyright (c) 2014 The WebRTC project authors. All Rights Reserved.
+	 *  Copyright (c) 2016 The WebRTC project authors. All Rights Reserved.
 	 *
 	 *  Use of this source code is governed by a BSD-style license
 	 *  that can be found in the LICENSE file in the root of the source
@@ -622,7 +624,9 @@ return /******/ (function(modules) { // webpackBootstrap
 	   eqeqeq: true, forin: false, globalstrict: true, node: true,
 	   quotmark: single, undef: true, unused: strict */
 	/* global mozRTCIceCandidate, mozRTCPeerConnection, Promise,
-	mozRTCSessionDescription, webkitRTCPeerConnection, MediaStreamTrack */
+	mozRTCSessionDescription, webkitRTCPeerConnection, MediaStreamTrack,
+	MediaStream, RTCIceGatherer, RTCIceTransport, RTCDtlsTransport,
+	RTCRtpSender, RTCRtpReceiver*/
 	/* exported trace,requestUserMedia */
 
 	'use strict';
@@ -643,7 +647,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	  },
 	  extractVersion: function(uastring, expr, pos) {
 	    var match = uastring.match(expr);
-	    return match && match.length >= pos && parseInt(match[pos]);
+	    return match && match.length >= pos && parseInt(match[pos], 10);
 	  }
 	};
 
@@ -698,7 +702,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	if (typeof window === 'undefined' || !window.navigator) {
 	  webrtcUtils.log('This does not appear to be a browser');
 	  webrtcDetectedBrowser = 'not a browser';
-	} else if (navigator.mozGetUserMedia && window.mozRTCPeerConnection) {
+	} else if (navigator.mozGetUserMedia) {
 	  webrtcUtils.log('This appears to be Firefox');
 
 	  webrtcDetectedBrowser = 'firefox';
@@ -710,43 +714,52 @@ return /******/ (function(modules) { // webpackBootstrap
 	  // the minimum firefox version still supported by adapter.
 	  webrtcMinimumVersion = 31;
 
-	  // The RTCPeerConnection object.
-	  window.RTCPeerConnection = function(pcConfig, pcConstraints) {
-	    if (webrtcDetectedVersion < 38) {
-	      // .urls is not supported in FF < 38.
-	      // create RTCIceServers with a single url.
-	      if (pcConfig && pcConfig.iceServers) {
-	        var newIceServers = [];
-	        for (var i = 0; i < pcConfig.iceServers.length; i++) {
-	          var server = pcConfig.iceServers[i];
-	          if (server.hasOwnProperty('urls')) {
-	            for (var j = 0; j < server.urls.length; j++) {
-	              var newServer = {
-	                url: server.urls[j]
-	              };
-	              if (server.urls[j].indexOf('turn') === 0) {
-	                newServer.username = server.username;
-	                newServer.credential = server.credential;
+	  // Shim for RTCPeerConnection on older versions.
+	  if (!window.RTCPeerConnection) {
+	    window.RTCPeerConnection = function(pcConfig, pcConstraints) {
+	      if (webrtcDetectedVersion < 38) {
+	        // .urls is not supported in FF < 38.
+	        // create RTCIceServers with a single url.
+	        if (pcConfig && pcConfig.iceServers) {
+	          var newIceServers = [];
+	          for (var i = 0; i < pcConfig.iceServers.length; i++) {
+	            var server = pcConfig.iceServers[i];
+	            if (server.hasOwnProperty('urls')) {
+	              for (var j = 0; j < server.urls.length; j++) {
+	                var newServer = {
+	                  url: server.urls[j]
+	                };
+	                if (server.urls[j].indexOf('turn') === 0) {
+	                  newServer.username = server.username;
+	                  newServer.credential = server.credential;
+	                }
+	                newIceServers.push(newServer);
 	              }
-	              newIceServers.push(newServer);
+	            } else {
+	              newIceServers.push(pcConfig.iceServers[i]);
 	            }
+	          }
+	          pcConfig.iceServers = newIceServers;
+	        }
+	      }
+	      return new mozRTCPeerConnection(pcConfig, pcConstraints); // jscs:ignore requireCapitalizedConstructors
+	    };
+
+	    // wrap static methods. Currently just generateCertificate.
+	    if (mozRTCPeerConnection.generateCertificate) {
+	      Object.defineProperty(window.RTCPeerConnection, 'generateCertificate', {
+	        get: function() {
+	          if (arguments.length) {
+	            return mozRTCPeerConnection.generateCertificate.apply(null,
+	                arguments);
 	          } else {
-	            newIceServers.push(pcConfig.iceServers[i]);
+	            return mozRTCPeerConnection.generateCertificate;
 	          }
 	        }
-	        pcConfig.iceServers = newIceServers;
-	      }
+	      });
 	    }
-	    return new mozRTCPeerConnection(pcConfig, pcConstraints); // jscs:ignore requireCapitalizedConstructors
-	  };
 
-	  // The RTCSessionDescription object.
-	  if (!window.RTCSessionDescription) {
 	    window.RTCSessionDescription = mozRTCSessionDescription;
-	  }
-
-	  // The RTCIceCandidate object.
-	  if (!window.RTCIceCandidate) {
 	    window.RTCIceCandidate = mozRTCIceCandidate;
 	  }
 
@@ -914,6 +927,20 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	    return pc;
 	  };
+
+	  // wrap static methods. Currently just generateCertificate.
+	  if (webkitRTCPeerConnection.generateCertificate) {
+	    Object.defineProperty(window.RTCPeerConnection, 'generateCertificate', {
+	      get: function() {
+	        if (arguments.length) {
+	          return webkitRTCPeerConnection.generateCertificate.apply(null,
+	              arguments);
+	        } else {
+	          return webkitRTCPeerConnection.generateCertificate;
+	        }
+	      }
+	    });
+	  }
 
 	  // add promise support
 	  ['createOffer', 'createAnswer'].forEach(function(method) {
@@ -1098,8 +1125,1164 @@ return /******/ (function(modules) { // webpackBootstrap
 	  webrtcDetectedVersion = webrtcUtils.extractVersion(navigator.userAgent,
 	      /Edge\/(\d+).(\d+)$/, 2);
 
-	  // the minimum version still supported by adapter.
-	  webrtcMinimumVersion = 12;
+	  // The minimum version still supported by adapter.
+	  // This is the build number for Edge.
+	  webrtcMinimumVersion = 10547;
+
+	  if (window.RTCIceGatherer) {
+	    // Generate an alphanumeric identifier for cname or mids.
+	    // TODO: use UUIDs instead? https://gist.github.com/jed/982883
+	    var generateIdentifier = function() {
+	      return Math.random().toString(36).substr(2, 10);
+	    };
+
+	    // The RTCP CNAME used by all peerconnections from the same JS.
+	    var localCName = generateIdentifier();
+
+	    // SDP helpers - to be moved into separate module.
+	    var SDPUtils = {};
+
+	    // Splits SDP into lines, dealing with both CRLF and LF.
+	    SDPUtils.splitLines = function(blob) {
+	      return blob.trim().split('\n').map(function(line) {
+	        return line.trim();
+	      });
+	    };
+
+	    // Splits SDP into sessionpart and mediasections. Ensures CRLF.
+	    SDPUtils.splitSections = function(blob) {
+	      var parts = blob.split('\r\nm=');
+	      return parts.map(function(part, index) {
+	        return (index > 0 ? 'm=' + part : part).trim() + '\r\n';
+	      });
+	    };
+
+	    // Returns lines that start with a certain prefix.
+	    SDPUtils.matchPrefix = function(blob, prefix) {
+	      return SDPUtils.splitLines(blob).filter(function(line) {
+	        return line.indexOf(prefix) === 0;
+	      });
+	    };
+
+	    // Parses an ICE candidate line. Sample input:
+	    // candidate:702786350 2 udp 41819902 8.8.8.8 60769 typ relay raddr 8.8.8.8 rport 55996"
+	    SDPUtils.parseCandidate = function(line) {
+	      var parts;
+	      // Parse both variants.
+	      if (line.indexOf('a=candidate:') === 0) {
+	        parts = line.substring(12).split(' ');
+	      } else {
+	        parts = line.substring(10).split(' ');
+	      }
+
+	      var candidate = {
+	        foundation: parts[0],
+	        component: parts[1],
+	        protocol: parts[2].toLowerCase(),
+	        priority: parseInt(parts[3], 10),
+	        ip: parts[4],
+	        port: parseInt(parts[5], 10),
+	        // skip parts[6] == 'typ'
+	        type: parts[7]
+	      };
+
+	      for (var i = 8; i < parts.length; i += 2) {
+	        switch (parts[i]) {
+	          case 'raddr':
+	            candidate.relatedAddress = parts[i + 1];
+	            break;
+	          case 'rport':
+	            candidate.relatedPort = parseInt(parts[i + 1], 10);
+	            break;
+	          case 'tcptype':
+	            candidate.tcpType = parts[i + 1];
+	            break;
+	          default: // Unknown extensions are silently ignored.
+	            break;
+	        }
+	      }
+	      return candidate;
+	    };
+
+	    // Translates a candidate object into SDP candidate attribute.
+	    SDPUtils.writeCandidate = function(candidate) {
+	      var sdp = [];
+	      sdp.push(candidate.foundation);
+	      sdp.push(candidate.component);
+	      sdp.push(candidate.protocol.toUpperCase());
+	      sdp.push(candidate.priority);
+	      sdp.push(candidate.ip);
+	      sdp.push(candidate.port);
+
+	      var type = candidate.type;
+	      sdp.push('typ');
+	      sdp.push(type);
+	      if (type !== 'host' && candidate.relatedAddress &&
+	          candidate.relatedPort) {
+	        sdp.push('raddr');
+	        sdp.push(candidate.relatedAddress); // was: relAddr
+	        sdp.push('rport');
+	        sdp.push(candidate.relatedPort); // was: relPort
+	      }
+	      if (candidate.tcpType && candidate.protocol.toLowerCase() === 'tcp') {
+	        sdp.push('tcptype');
+	        sdp.push(candidate.tcpType);
+	      }
+	      return 'candidate:' + sdp.join(' ');
+	    };
+
+	    // Parses an rtpmap line, returns RTCRtpCoddecParameters. Sample input:
+	    // a=rtpmap:111 opus/48000/2
+	    SDPUtils.parseRtpMap = function(line) {
+	      var parts = line.substr(9).split(' ');
+	      var parsed = {
+	        payloadType: parseInt(parts.shift(), 10) // was: id
+	      };
+
+	      parts = parts[0].split('/');
+
+	      parsed.name = parts[0];
+	      parsed.clockRate = parseInt(parts[1], 10); // was: clockrate
+	      parsed.numChannels = parts.length === 3 ? parseInt(parts[2], 10) : 1; // was: channels
+	      return parsed;
+	    };
+
+	    // Generate an a=rtpmap line from RTCRtpCodecCapability or RTCRtpCodecParameters.
+	    SDPUtils.writeRtpMap = function(codec) {
+	      var pt = codec.payloadType;
+	      if (codec.preferredPayloadType !== undefined) {
+	        pt = codec.preferredPayloadType;
+	      }
+	      return 'a=rtpmap:' + pt + ' ' + codec.name + '/' + codec.clockRate +
+	          (codec.numChannels !== 1 ? '/' + codec.numChannels : '') + '\r\n';
+	    };
+
+	    // Parses an ftmp line, returns dictionary. Sample input:
+	    // a=fmtp:96 vbr=on;cng=on
+	    // Also deals with vbr=on; cng=on
+	    SDPUtils.parseFmtp = function(line) {
+	      var parsed = {};
+	      var kv;
+	      var parts = line.substr(line.indexOf(' ') + 1).split(';');
+	      for (var j = 0; j < parts.length; j++) {
+	        kv = parts[j].trim().split('=');
+	        parsed[kv[0].trim()] = kv[1];
+	      }
+	      return parsed;
+	    };
+
+	    // Generates an a=ftmp line from RTCRtpCodecCapability or RTCRtpCodecParameters.
+	    SDPUtils.writeFtmp = function(codec) {
+	      var line = '';
+	      var pt = codec.payloadType;
+	      if (codec.preferredPayloadType !== undefined) {
+	        pt = codec.preferredPayloadType;
+	      }
+	      if (codec.parameters && codec.parameters.length) {
+	        var params = [];
+	        Object.keys(codec.parameters).forEach(function(param) {
+	          params.push(param + '=' + codec.parameters[param]);
+	        });
+	        line += 'a=fmtp:' + pt + ' ' + params.join(';') + '\r\n';
+	      }
+	      return line;
+	    };
+
+	    // Parses an rtcp-fb line, returns RTCPRtcpFeedback object. Sample input:
+	    // a=rtcp-fb:98 nack rpsi
+	    SDPUtils.parseRtcpFb = function(line) {
+	      var parts = line.substr(line.indexOf(' ') + 1).split(' ');
+	      return {
+	        type: parts.shift(),
+	        parameter: parts.join(' ')
+	      };
+	    };
+	    // Generate a=rtcp-fb lines from RTCRtpCodecCapability or RTCRtpCodecParameters.
+	    SDPUtils.writeRtcpFb = function(codec) {
+	      var lines = '';
+	      var pt = codec.payloadType;
+	      if (codec.preferredPayloadType !== undefined) {
+	        pt = codec.preferredPayloadType;
+	      }
+	      if (codec.rtcpFeedback && codec.rtcpFeedback.length) {
+	        // FIXME: special handling for trr-int?
+	        codec.rtcpFeedback.forEach(function(fb) {
+	          lines += 'a=rtcp-fb:' + pt + ' ' + fb.type + ' ' + fb.parameter +
+	              '\r\n';
+	        });
+	      }
+	      return lines;
+	    };
+
+	    // Parses an RFC 5576 ssrc media attribute. Sample input:
+	    // a=ssrc:3735928559 cname:something
+	    SDPUtils.parseSsrcMedia = function(line) {
+	      var sp = line.indexOf(' ');
+	      var parts = {
+	        ssrc: line.substr(7, sp - 7),
+	      };
+	      var colon = line.indexOf(':', sp);
+	      if (colon > -1) {
+	        parts.attribute = line.substr(sp + 1, colon - sp - 1);
+	        parts.value = line.substr(colon + 1);
+	      } else {
+	        parts.attribute = line.substr(sp + 1);
+	      }
+	      return parts;
+	    };
+
+	    // Extracts DTLS parameters from SDP media section or sessionpart.
+	    // FIXME: for consistency with other functions this should only
+	    //   get the fingerprint line as input. See also getIceParameters.
+	    SDPUtils.getDtlsParameters = function(mediaSection, sessionpart) {
+	      var lines = SDPUtils.splitLines(mediaSection);
+	      lines = lines.concat(SDPUtils.splitLines(sessionpart)); // Search in session part, too.
+	      var fpLine = lines.filter(function(line) {
+	        return line.indexOf('a=fingerprint:') === 0;
+	      })[0].substr(14);
+	      // Note: a=setup line is ignored since we use the 'auto' role.
+	      var dtlsParameters = {
+	        role: 'auto',
+	        fingerprints: [{
+	          algorithm: fpLine.split(' ')[0],
+	          value: fpLine.split(' ')[1]
+	        }]
+	      };
+	      return dtlsParameters;
+	    };
+
+	    // Serializes DTLS parameters to SDP.
+	    SDPUtils.writeDtlsParameters = function(params, setupType) {
+	      var sdp = 'a=setup:' + setupType + '\r\n';
+	      params.fingerprints.forEach(function(fp) {
+	        sdp += 'a=fingerprint:' + fp.algorithm + ' ' + fp.value + '\r\n';
+	      });
+	      return sdp;
+	    };
+	    // Parses ICE information from SDP media section or sessionpart.
+	    // FIXME: for consistency with other functions this should only
+	    //   get the ice-ufrag and ice-pwd lines as input.
+	    SDPUtils.getIceParameters = function(mediaSection, sessionpart) {
+	      var lines = SDPUtils.splitLines(mediaSection);
+	      lines = lines.concat(SDPUtils.splitLines(sessionpart)); // Search in session part, too.
+	      var iceParameters = {
+	        usernameFragment: lines.filter(function(line) {
+	          return line.indexOf('a=ice-ufrag:') === 0;
+	        })[0].substr(12),
+	        password: lines.filter(function(line) {
+	          return line.indexOf('a=ice-pwd:') === 0;
+	        })[0].substr(10)
+	      };
+	      return iceParameters;
+	    };
+
+	    // Serializes ICE parameters to SDP.
+	    SDPUtils.writeIceParameters = function(params) {
+	      return 'a=ice-ufrag:' + params.usernameFragment + '\r\n' +
+	          'a=ice-pwd:' + params.password + '\r\n';
+	    };
+
+	    // Parses the SDP media section and returns RTCRtpParameters.
+	    SDPUtils.parseRtpParameters = function(mediaSection) {
+	      var description = {
+	        codecs: [],
+	        headerExtensions: [],
+	        fecMechanisms: [],
+	        rtcp: []
+	      };
+	      var lines = SDPUtils.splitLines(mediaSection);
+	      var mline = lines[0].split(' ');
+	      for (var i = 3; i < mline.length; i++) { // find all codecs from mline[3..]
+	        var pt = mline[i];
+	        var rtpmapline = SDPUtils.matchPrefix(
+	            mediaSection, 'a=rtpmap:' + pt + ' ')[0];
+	        if (rtpmapline) {
+	          var codec = SDPUtils.parseRtpMap(rtpmapline);
+	          var fmtps = SDPUtils.matchPrefix(
+	              mediaSection, 'a=fmtp:' + pt + ' ');
+	          // Only the first a=fmtp:<pt> is considered.
+	          codec.parameters = fmtps.length ? SDPUtils.parseFmtp(fmtps[0]) : {};
+	          codec.rtcpFeedback = SDPUtils.matchPrefix(
+	              mediaSection, 'a=rtcp-fb:' + pt + ' ')
+	            .map(SDPUtils.parseRtcpFb);
+	          description.codecs.push(codec);
+	        }
+	      }
+	      // FIXME: parse headerExtensions, fecMechanisms and rtcp.
+	      return description;
+	    };
+
+	    // Generates parts of the SDP media section describing the capabilities / parameters.
+	    SDPUtils.writeRtpDescription = function(kind, caps) {
+	      var sdp = '';
+
+	      // Build the mline.
+	      sdp += 'm=' + kind + ' ';
+	      sdp += caps.codecs.length > 0 ? '9' : '0'; // reject if no codecs.
+	      sdp += ' UDP/TLS/RTP/SAVPF ';
+	      sdp += caps.codecs.map(function(codec) {
+	        if (codec.preferredPayloadType !== undefined) {
+	          return codec.preferredPayloadType;
+	        }
+	        return codec.payloadType;
+	      }).join(' ') + '\r\n';
+
+	      sdp += 'c=IN IP4 0.0.0.0\r\n';
+	      sdp += 'a=rtcp:9 IN IP4 0.0.0.0\r\n';
+
+	      // Add a=rtpmap lines for each codec. Also fmtp and rtcp-fb.
+	      caps.codecs.forEach(function(codec) {
+	        sdp += SDPUtils.writeRtpMap(codec);
+	        sdp += SDPUtils.writeFtmp(codec);
+	        sdp += SDPUtils.writeRtcpFb(codec);
+	      });
+	      // FIXME: add headerExtensions, fecMechanismş and rtcp.
+	      sdp += 'a=rtcp-mux\r\n';
+	      return sdp;
+	    };
+
+	    SDPUtils.writeSessionBoilerplate = function() {
+	      // FIXME: sess-id should be an NTP timestamp.
+	      return 'v=0\r\n' +
+	          'o=thisisadapterortc 8169639915646943137 2 IN IP4 127.0.0.1\r\n' +
+	          's=-\r\n' +
+	          't=0 0\r\n';
+	    };
+
+	    SDPUtils.writeMediaSection = function(transceiver, caps, type, stream) {
+	      var sdp = SDPUtils.writeRtpDescription(transceiver.kind, caps);
+
+	      // Map ICE parameters (ufrag, pwd) to SDP.
+	      sdp += SDPUtils.writeIceParameters(
+	          transceiver.iceGatherer.getLocalParameters());
+
+	      // Map DTLS parameters to SDP.
+	      sdp += SDPUtils.writeDtlsParameters(
+	          transceiver.dtlsTransport.getLocalParameters(),
+	          type === 'offer' ? 'actpass' : 'active');
+
+	      sdp += 'a=mid:' + transceiver.mid + '\r\n';
+
+	      if (transceiver.rtpSender && transceiver.rtpReceiver) {
+	        sdp += 'a=sendrecv\r\n';
+	      } else if (transceiver.rtpSender) {
+	        sdp += 'a=sendonly\r\n';
+	      } else if (transceiver.rtpReceiver) {
+	        sdp += 'a=recvonly\r\n';
+	      } else {
+	        sdp += 'a=inactive\r\n';
+	      }
+
+	      // FIXME: for RTX there might be multiple SSRCs. Not implemented in Edge yet.
+	      if (transceiver.rtpSender) {
+	        var msid = 'msid:' + stream.id + ' ' +
+	            transceiver.rtpSender.track.id + '\r\n';
+	        sdp += 'a=' + msid;
+	        sdp += 'a=ssrc:' + transceiver.sendSsrc + ' ' + msid;
+	      }
+	      // FIXME: this should be written by writeRtpDescription.
+	      sdp += 'a=ssrc:' + transceiver.sendSsrc + ' cname:' +
+	          localCName + '\r\n';
+	      return sdp;
+	    };
+
+	    // Gets the direction from the mediaSection or the sessionpart.
+	    SDPUtils.getDirection = function(mediaSection, sessionpart) {
+	      // Look for sendrecv, sendonly, recvonly, inactive, default to sendrecv.
+	      var lines = SDPUtils.splitLines(mediaSection);
+	      for (var i = 0; i < lines.length; i++) {
+	        switch (lines[i]) {
+	          case 'a=sendrecv':
+	          case 'a=sendonly':
+	          case 'a=recvonly':
+	          case 'a=inactive':
+	            return lines[i].substr(2);
+	        }
+	      }
+	      if (sessionpart) {
+	        return SDPUtils.getDirection(sessionpart);
+	      }
+	      return 'sendrecv';
+	    };
+
+	    // ORTC defines an RTCIceCandidate object but no constructor.
+	    // Not implemented in Edge.
+	    if (!window.RTCIceCandidate) {
+	      window.RTCIceCandidate = function(args) {
+	        return args;
+	      };
+	    }
+	    // ORTC does not have a session description object but
+	    // other browsers (i.e. Chrome) that will support both PC and ORTC
+	    // in the future might have this defined already.
+	    if (!window.RTCSessionDescription) {
+	      window.RTCSessionDescription = function(args) {
+	        return args;
+	      };
+	    }
+
+	    window.RTCPeerConnection = function(config) {
+	      var self = this;
+
+	      this.onicecandidate = null;
+	      this.onaddstream = null;
+	      this.onremovestream = null;
+	      this.onsignalingstatechange = null;
+	      this.oniceconnectionstatechange = null;
+	      this.onnegotiationneeded = null;
+	      this.ondatachannel = null;
+
+	      this.localStreams = [];
+	      this.remoteStreams = [];
+	      this.getLocalStreams = function() { return self.localStreams; };
+	      this.getRemoteStreams = function() { return self.remoteStreams; };
+
+	      this.localDescription = new RTCSessionDescription({
+	        type: '',
+	        sdp: ''
+	      });
+	      this.remoteDescription = new RTCSessionDescription({
+	        type: '',
+	        sdp: ''
+	      });
+	      this.signalingState = 'stable';
+	      this.iceConnectionState = 'new';
+
+	      this.iceOptions = {
+	        gatherPolicy: 'all',
+	        iceServers: []
+	      };
+	      if (config && config.iceTransportPolicy) {
+	        switch (config.iceTransportPolicy) {
+	          case 'all':
+	          case 'relay':
+	            this.iceOptions.gatherPolicy = config.iceTransportPolicy;
+	            break;
+	          case 'none':
+	            // FIXME: remove once implementation and spec have added this.
+	            throw new TypeError('iceTransportPolicy "none" not supported');
+	        }
+	      }
+	      if (config && config.iceServers) {
+	        // Edge does not like
+	        // 1) stun:
+	        // 2) turn: that does not have all of turn:host:port?transport=udp
+	        // 3) an array of urls
+	        config.iceServers.forEach(function(server) {
+	          if (server.urls) {
+	            var url;
+	            if (typeof(server.urls) === 'string') {
+	              url = server.urls;
+	            } else {
+	              url = server.urls[0];
+	            }
+	            if (url.indexOf('transport=udp') !== -1) {
+	              self.iceServers.push({
+	                username: server.username,
+	                credential: server.credential,
+	                urls: url
+	              });
+	            }
+	          }
+	        });
+	      }
+
+	      // per-track iceGathers, iceTransports, dtlsTransports, rtpSenders, ...
+	      // everything that is needed to describe a SDP m-line.
+	      this.transceivers = [];
+
+	      // since the iceGatherer is currently created in createOffer but we
+	      // must not emit candidates until after setLocalDescription we buffer
+	      // them in this array.
+	      this._localIceCandidatesBuffer = [];
+	    };
+
+	    window.RTCPeerConnection.prototype._emitBufferedCandidates = function() {
+	      var self = this;
+	      // FIXME: need to apply ice candidates in a way which is async but in-order
+	      this._localIceCandidatesBuffer.forEach(function(event) {
+	        if (self.onicecandidate !== null) {
+	          self.onicecandidate(event);
+	        }
+	      });
+	      this._localIceCandidatesBuffer = [];
+	    };
+
+	    window.RTCPeerConnection.prototype.addStream = function(stream) {
+	      // Clone is necessary for local demos mostly, attaching directly
+	      // to two different senders does not work (build 10547).
+	      this.localStreams.push(stream.clone());
+	      this._maybeFireNegotiationNeeded();
+	    };
+
+	    window.RTCPeerConnection.prototype.removeStream = function(stream) {
+	      var idx = this.localStreams.indexOf(stream);
+	      if (idx > -1) {
+	        this.localStreams.splice(idx, 1);
+	        this._maybeFireNegotiationNeeded();
+	      }
+	    };
+
+	    // Determines the intersection of local and remote capabilities.
+	    window.RTCPeerConnection.prototype._getCommonCapabilities =
+	        function(localCapabilities, remoteCapabilities) {
+	      var commonCapabilities = {
+	        codecs: [],
+	        headerExtensions: [],
+	        fecMechanisms: []
+	      };
+	      localCapabilities.codecs.forEach(function(lCodec) {
+	        for (var i = 0; i < remoteCapabilities.codecs.length; i++) {
+	          var rCodec = remoteCapabilities.codecs[i];
+	          if (lCodec.name.toLowerCase() === rCodec.name.toLowerCase() &&
+	              lCodec.clockRate === rCodec.clockRate &&
+	              lCodec.numChannels === rCodec.numChannels) {
+	            // push rCodec so we reply with offerer payload type
+	            commonCapabilities.codecs.push(rCodec);
+
+	            // FIXME: also need to determine intersection between
+	            // .rtcpFeedback and .parameters
+	            break;
+	          }
+	        }
+	      });
+
+	      localCapabilities.headerExtensions.forEach(function(lHeaderExtension) {
+	        for (var i = 0; i < remoteCapabilities.headerExtensions.length; i++) {
+	          var rHeaderExtension = remoteCapabilities.headerExtensions[i];
+	          if (lHeaderExtension.uri === rHeaderExtension.uri) {
+	            commonCapabilities.headerExtensions.push(rHeaderExtension);
+	            break;
+	          }
+	        }
+	      });
+
+	      // FIXME: fecMechanisms
+	      return commonCapabilities;
+	    };
+
+	    // Create ICE gatherer, ICE transport and DTLS transport.
+	    window.RTCPeerConnection.prototype._createIceAndDtlsTransports =
+	        function(mid, sdpMLineIndex) {
+	      var self = this;
+	      var iceGatherer = new RTCIceGatherer(self.iceOptions);
+	      var iceTransport = new RTCIceTransport(iceGatherer);
+	      iceGatherer.onlocalcandidate = function(evt) {
+	        var event = {};
+	        event.candidate = {sdpMid: mid, sdpMLineIndex: sdpMLineIndex};
+
+	        var cand = evt.candidate;
+	        // Edge emits an empty object for RTCIceCandidateComplete‥
+	        if (!cand || Object.keys(cand).length === 0) {
+	          // polyfill since RTCIceGatherer.state is not implemented in Edge 10547 yet.
+	          if (iceGatherer.state === undefined) {
+	            iceGatherer.state = 'completed';
+	          }
+
+	          // Emit a candidate with type endOfCandidates to make the samples work.
+	          // Edge requires addIceCandidate with this empty candidate to start checking.
+	          // The real solution is to signal end-of-candidates to the other side when
+	          // getting the null candidate but some apps (like the samples) don't do that.
+	          event.candidate.candidate =
+	              'candidate:1 1 udp 1 0.0.0.0 9 typ endOfCandidates';
+	        } else {
+	          // RTCIceCandidate doesn't have a component, needs to be added
+	          cand.component = iceTransport.component === 'RTCP' ? 2 : 1;
+	          event.candidate.candidate = SDPUtils.writeCandidate(cand);
+	        }
+
+	        var complete = self.transceivers.every(function(transceiver) {
+	          return transceiver.iceGatherer &&
+	              transceiver.iceGatherer.state === 'completed';
+	        });
+	        // FIXME: update .localDescription with candidate and (potentially) end-of-candidates.
+	        //     To make this harder, the gatherer might emit candidates before localdescription
+	        //     is set. To make things worse, gather.getLocalCandidates still errors in
+	        //     Edge 10547 when no candidates have been gathered yet.
+
+	        if (self.onicecandidate !== null) {
+	          // Emit candidate if localDescription is set.
+	          // Also emits null candidate when all gatherers are complete.
+	          if (self.localDescription && self.localDescription.type === '') {
+	            self._localIceCandidatesBuffer.push(event);
+	            if (complete) {
+	              self._localIceCandidatesBuffer.push({});
+	            }
+	          } else {
+	            self.onicecandidate(event);
+	            if (complete) {
+	              self.onicecandidate({});
+	            }
+	          }
+	        }
+	      };
+	      iceTransport.onicestatechange = function() {
+	        self._updateConnectionState();
+	      };
+
+	      var dtlsTransport = new RTCDtlsTransport(iceTransport);
+	      dtlsTransport.ondtlsstatechange = function() {
+	        self._updateConnectionState();
+	      };
+	      dtlsTransport.onerror = function() {
+	        // onerror does not set state to failed by itself.
+	        dtlsTransport.state = 'failed';
+	        self._updateConnectionState();
+	      };
+
+	      return {
+	        iceGatherer: iceGatherer,
+	        iceTransport: iceTransport,
+	        dtlsTransport: dtlsTransport
+	      };
+	    };
+
+	    // Start the RTP Sender and Receiver for a transceiver.
+	    window.RTCPeerConnection.prototype._transceive = function(transceiver,
+	        send, recv) {
+	      var params = this._getCommonCapabilities(transceiver.localCapabilities,
+	          transceiver.remoteCapabilities);
+	      if (send && transceiver.rtpSender) {
+	        params.encodings = [{
+	          ssrc: transceiver.sendSsrc
+	        }];
+	        params.rtcp = {
+	          cname: localCName,
+	          ssrc: transceiver.recvSsrc
+	        };
+	        transceiver.rtpSender.send(params);
+	      }
+	      if (recv && transceiver.rtpReceiver) {
+	        params.encodings = [{
+	          ssrc: transceiver.recvSsrc
+	        }];
+	        params.rtcp = {
+	          cname: transceiver.cname,
+	          ssrc: transceiver.sendSsrc
+	        };
+	        transceiver.rtpReceiver.receive(params);
+	      }
+	    };
+
+	    window.RTCPeerConnection.prototype.setLocalDescription =
+	        function(description) {
+	      var self = this;
+	      if (description.type === 'offer') {
+	        if (!this._pendingOffer) {
+	        } else {
+	          this.transceivers = this._pendingOffer;
+	          delete this._pendingOffer;
+	        }
+	      } else if (description.type === 'answer') {
+	        var sections = SDPUtils.splitSections(self.remoteDescription.sdp);
+	        var sessionpart = sections.shift();
+	        sections.forEach(function(mediaSection, sdpMLineIndex) {
+	          var transceiver = self.transceivers[sdpMLineIndex];
+	          var iceGatherer = transceiver.iceGatherer;
+	          var iceTransport = transceiver.iceTransport;
+	          var dtlsTransport = transceiver.dtlsTransport;
+	          var localCapabilities = transceiver.localCapabilities;
+	          var remoteCapabilities = transceiver.remoteCapabilities;
+	          var rejected = mediaSection.split('\n', 1)[0]
+	              .split(' ', 2)[1] === '0';
+
+	          if (!rejected) {
+	            var remoteIceParameters = SDPUtils.getIceParameters(mediaSection,
+	                sessionpart);
+	            iceTransport.start(iceGatherer, remoteIceParameters, 'controlled');
+
+	            var remoteDtlsParameters = SDPUtils.getDtlsParameters(mediaSection,
+	              sessionpart);
+	            dtlsTransport.start(remoteDtlsParameters);
+
+	            // Calculate intersection of capabilities.
+	            var params = self._getCommonCapabilities(localCapabilities,
+	                remoteCapabilities);
+
+	            // Start the RTCRtpSender. The RTCRtpReceiver for this transceiver
+	            // has already been started in setRemoteDescription.
+	            self._transceive(transceiver,
+	                params.codecs.length > 0,
+	                false);
+	          }
+	        });
+	      }
+
+	      this.localDescription = description;
+	      switch (description.type) {
+	        case 'offer':
+	          this._updateSignalingState('have-local-offer');
+	          break;
+	        case 'answer':
+	          this._updateSignalingState('stable');
+	          break;
+	        default:
+	          throw new TypeError('unsupported type "' + description.type + '"');
+	      }
+
+	      // If a success callback was provided, emit ICE candidates after it has been
+	      // executed. Otherwise, emit callback after the Promise is resolved.
+	      var hasCallback = arguments.length > 1 &&
+	        typeof arguments[1] === 'function';
+	      if (hasCallback) {
+	        var cb = arguments[1];
+	        window.setTimeout(function() {
+	          cb();
+	          self._emitBufferedCandidates();
+	        }, 0);
+	      }
+	      var p = Promise.resolve();
+	      p.then(function() {
+	        if (!hasCallback) {
+	          window.setTimeout(self._emitBufferedCandidates.bind(self), 0);
+	        }
+	      });
+	      return p;
+	    };
+
+	    window.RTCPeerConnection.prototype.setRemoteDescription =
+	        function(description) {
+	      var self = this;
+	      var stream = new MediaStream();
+	      var sections = SDPUtils.splitSections(description.sdp);
+	      var sessionpart = sections.shift();
+	      sections.forEach(function(mediaSection, sdpMLineIndex) {
+	        var lines = SDPUtils.splitLines(mediaSection);
+	        var mline = lines[0].substr(2).split(' ');
+	        var kind = mline[0];
+	        var rejected = mline[1] === '0';
+	        var direction = SDPUtils.getDirection(mediaSection, sessionpart);
+
+	        var transceiver;
+	        var iceGatherer;
+	        var iceTransport;
+	        var dtlsTransport;
+	        var rtpSender;
+	        var rtpReceiver;
+	        var sendSsrc;
+	        var recvSsrc;
+	        var localCapabilities;
+
+	        // FIXME: ensure the mediaSection has rtcp-mux set.
+	        var remoteCapabilities = SDPUtils.parseRtpParameters(mediaSection);
+	        var remoteIceParameters;
+	        var remoteDtlsParameters;
+	        if (!rejected) {
+	          remoteIceParameters = SDPUtils.getIceParameters(mediaSection,
+	              sessionpart);
+	          remoteDtlsParameters = SDPUtils.getDtlsParameters(mediaSection,
+	              sessionpart);
+	        }
+	        var mid = SDPUtils.matchPrefix(mediaSection, 'a=mid:')[0].substr(6);
+
+	        var cname;
+	        // Gets the first SSRC. Note that with RTX there might be multiple SSRCs.
+	        var remoteSsrc = SDPUtils.matchPrefix(mediaSection, 'a=ssrc:')
+	            .map(function(line) {
+	              return SDPUtils.parseSsrcMedia(line);
+	            })
+	            .filter(function(obj) {
+	              return obj.attribute === 'cname';
+	            })[0];
+	        if (remoteSsrc) {
+	          recvSsrc = parseInt(remoteSsrc.ssrc, 10);
+	          cname = remoteSsrc.value;
+	        }
+
+	        if (description.type === 'offer') {
+	          var transports = self._createIceAndDtlsTransports(mid, sdpMLineIndex);
+
+	          localCapabilities = RTCRtpReceiver.getCapabilities(kind);
+	          sendSsrc = (2 * sdpMLineIndex + 2) * 1001;
+
+	          rtpReceiver = new RTCRtpReceiver(transports.dtlsTransport, kind);
+
+	          // FIXME: not correct when there are multiple streams but that is
+	          // not currently supported in this shim.
+	          stream.addTrack(rtpReceiver.track);
+
+	          // FIXME: look at direction.
+	          if (self.localStreams.length > 0 &&
+	              self.localStreams[0].getTracks().length >= sdpMLineIndex) {
+	            // FIXME: actually more complicated, needs to match types etc
+	            var localtrack = self.localStreams[0].getTracks()[sdpMLineIndex];
+	            rtpSender = new RTCRtpSender(localtrack, transports.dtlsTransport);
+	          }
+
+	          self.transceivers[sdpMLineIndex] = {
+	            iceGatherer: transports.iceGatherer,
+	            iceTransport: transports.iceTransport,
+	            dtlsTransport: transports.dtlsTransport,
+	            localCapabilities: localCapabilities,
+	            remoteCapabilities: remoteCapabilities,
+	            rtpSender: rtpSender,
+	            rtpReceiver: rtpReceiver,
+	            kind: kind,
+	            mid: mid,
+	            cname: cname,
+	            sendSsrc: sendSsrc,
+	            recvSsrc: recvSsrc
+	          };
+	          // Start the RTCRtpReceiver now. The RTPSender is started in setLocalDescription.
+	          self._transceive(self.transceivers[sdpMLineIndex],
+	              false,
+	              direction === 'sendrecv' || direction === 'sendonly');
+	        } else if (description.type === 'answer' && !rejected) {
+	          transceiver = self.transceivers[sdpMLineIndex];
+	          iceGatherer = transceiver.iceGatherer;
+	          iceTransport = transceiver.iceTransport;
+	          dtlsTransport = transceiver.dtlsTransport;
+	          rtpSender = transceiver.rtpSender;
+	          rtpReceiver = transceiver.rtpReceiver;
+	          sendSsrc = transceiver.sendSsrc;
+	          //recvSsrc = transceiver.recvSsrc;
+	          localCapabilities = transceiver.localCapabilities;
+
+	          self.transceivers[sdpMLineIndex].recvSsrc = recvSsrc;
+	          self.transceivers[sdpMLineIndex].remoteCapabilities =
+	              remoteCapabilities;
+	          self.transceivers[sdpMLineIndex].cname = cname;
+
+	          iceTransport.start(iceGatherer, remoteIceParameters, 'controlling');
+	          dtlsTransport.start(remoteDtlsParameters);
+
+	          self._transceive(transceiver,
+	              direction === 'sendrecv' || direction === 'recvonly',
+	              direction === 'sendrecv' || direction === 'sendonly');
+
+	          if (rtpReceiver &&
+	              (direction === 'sendrecv' || direction === 'sendonly')) {
+	            stream.addTrack(rtpReceiver.track);
+	          } else {
+	            // FIXME: actually the receiver should be created later.
+	            delete transceiver.rtpReceiver;
+	          }
+	        }
+	      });
+
+	      this.remoteDescription = description;
+	      switch (description.type) {
+	        case 'offer':
+	          this._updateSignalingState('have-remote-offer');
+	          break;
+	        case 'answer':
+	          this._updateSignalingState('stable');
+	          break;
+	        default:
+	          throw new TypeError('unsupported type "' + description.type + '"');
+	      }
+	      window.setTimeout(function() {
+	        if (self.onaddstream !== null && stream.getTracks().length) {
+	          self.remoteStreams.push(stream);
+	          window.setTimeout(function() {
+	            self.onaddstream({stream: stream});
+	          }, 0);
+	        }
+	      }, 0);
+	      if (arguments.length > 1 && typeof arguments[1] === 'function') {
+	        window.setTimeout(arguments[1], 0);
+	      }
+	      return Promise.resolve();
+	    };
+
+	    window.RTCPeerConnection.prototype.close = function() {
+	      this.transceivers.forEach(function(transceiver) {
+	        /* not yet
+	        if (transceiver.iceGatherer) {
+	          transceiver.iceGatherer.close();
+	        }
+	        */
+	        if (transceiver.iceTransport) {
+	          transceiver.iceTransport.stop();
+	        }
+	        if (transceiver.dtlsTransport) {
+	          transceiver.dtlsTransport.stop();
+	        }
+	        if (transceiver.rtpSender) {
+	          transceiver.rtpSender.stop();
+	        }
+	        if (transceiver.rtpReceiver) {
+	          transceiver.rtpReceiver.stop();
+	        }
+	      });
+	      // FIXME: clean up tracks, local streams, remote streams, etc
+	      this._updateSignalingState('closed');
+	    };
+
+	    // Update the signaling state.
+	    window.RTCPeerConnection.prototype._updateSignalingState =
+	        function(newState) {
+	      this.signalingState = newState;
+	      if (this.onsignalingstatechange !== null) {
+	        this.onsignalingstatechange();
+	      }
+	    };
+
+	    // Determine whether to fire the negotiationneeded event.
+	    window.RTCPeerConnection.prototype._maybeFireNegotiationNeeded =
+	        function() {
+	      // Fire away (for now).
+	      if (this.onnegotiationneeded !== null) {
+	        this.onnegotiationneeded();
+	      }
+	    };
+
+	    // Update the connection state.
+	    window.RTCPeerConnection.prototype._updateConnectionState =
+	        function() {
+	      var self = this;
+	      var newState;
+	      var states = {
+	        'new': 0,
+	        closed: 0,
+	        connecting: 0,
+	        checking: 0,
+	        connected: 0,
+	        completed: 0,
+	        failed: 0
+	      };
+	      this.transceivers.forEach(function(transceiver) {
+	        states[transceiver.iceTransport.state]++;
+	        states[transceiver.dtlsTransport.state]++;
+	      });
+	      // ICETransport.completed and connected are the same for this purpose.
+	      states.connected += states.completed;
+
+	      newState = 'new';
+	      if (states.failed > 0) {
+	        newState = 'failed';
+	      } else if (states.connecting > 0 || states.checking > 0) {
+	        newState = 'connecting';
+	      } else if (states.disconnected > 0) {
+	        newState = 'disconnected';
+	      } else if (states.new > 0) {
+	        newState = 'new';
+	      } else if (states.connecting > 0 || states.completed > 0) {
+	        newState = 'connected';
+	      }
+
+	      if (newState !== self.iceConnectionState) {
+	        self.iceConnectionState = newState;
+	        if (this.oniceconnectionstatechange !== null) {
+	          this.oniceconnectionstatechange();
+	        }
+	      }
+	    };
+
+	    window.RTCPeerConnection.prototype.createOffer = function() {
+	      var self = this;
+	      if (this._pendingOffer) {
+	        throw new Error('createOffer called while there is a pending offer.');
+	      }
+	      var offerOptions;
+	      if (arguments.length === 1 && typeof arguments[0] !== 'function') {
+	        offerOptions = arguments[0];
+	      } else if (arguments.length === 3) {
+	        offerOptions = arguments[2];
+	      }
+
+	      var tracks = [];
+	      var numAudioTracks = 0;
+	      var numVideoTracks = 0;
+	      // Default to sendrecv.
+	      if (this.localStreams.length) {
+	        numAudioTracks = this.localStreams[0].getAudioTracks().length;
+	        numVideoTracks = this.localStreams[0].getVideoTracks().length;
+	      }
+	      // Determine number of audio and video tracks we need to send/recv.
+	      if (offerOptions) {
+	        // Reject Chrome legacy constraints.
+	        if (offerOptions.mandatory || offerOptions.optional) {
+	          throw new TypeError(
+	              'Legacy mandatory/optional constraints not supported.');
+	        }
+	        if (offerOptions.offerToReceiveAudio !== undefined) {
+	          numAudioTracks = offerOptions.offerToReceiveAudio;
+	        }
+	        if (offerOptions.offerToReceiveVideo !== undefined) {
+	          numVideoTracks = offerOptions.offerToReceiveVideo;
+	        }
+	      }
+	      if (this.localStreams.length) {
+	        // Push local streams.
+	        this.localStreams[0].getTracks().forEach(function(track) {
+	          tracks.push({
+	            kind: track.kind,
+	            track: track,
+	            wantReceive: track.kind === 'audio' ?
+	                numAudioTracks > 0 : numVideoTracks > 0
+	          });
+	          if (track.kind === 'audio') {
+	            numAudioTracks--;
+	          } else if (track.kind === 'video') {
+	            numVideoTracks--;
+	          }
+	        });
+	      }
+	      // Create M-lines for recvonly streams.
+	      while (numAudioTracks > 0 || numVideoTracks > 0) {
+	        if (numAudioTracks > 0) {
+	          tracks.push({
+	            kind: 'audio',
+	            wantReceive: true
+	          });
+	          numAudioTracks--;
+	        }
+	        if (numVideoTracks > 0) {
+	          tracks.push({
+	            kind: 'video',
+	            wantReceive: true
+	          });
+	          numVideoTracks--;
+	        }
+	      }
+
+	      var sdp = SDPUtils.writeSessionBoilerplate();
+	      var transceivers = [];
+	      tracks.forEach(function(mline, sdpMLineIndex) {
+	        // For each track, create an ice gatherer, ice transport, dtls transport,
+	        // potentially rtpsender and rtpreceiver.
+	        var track = mline.track;
+	        var kind = mline.kind;
+	        var mid = generateIdentifier();
+
+	        var transports = self._createIceAndDtlsTransports(mid, sdpMLineIndex);
+
+	        var localCapabilities = RTCRtpSender.getCapabilities(kind);
+	        var rtpSender;
+	        var rtpReceiver;
+
+	        // generate an ssrc now, to be used later in rtpSender.send
+	        var sendSsrc = (2 * sdpMLineIndex + 1) * 1001;
+	        if (track) {
+	          rtpSender = new RTCRtpSender(track, transports.dtlsTransport);
+	        }
+
+	        if (mline.wantReceive) {
+	          rtpReceiver = new RTCRtpReceiver(transports.dtlsTransport, kind);
+	        }
+
+	        transceivers[sdpMLineIndex] = {
+	          iceGatherer: transports.iceGatherer,
+	          iceTransport: transports.iceTransport,
+	          dtlsTransport: transports.dtlsTransport,
+	          localCapabilities: localCapabilities,
+	          remoteCapabilities: null,
+	          rtpSender: rtpSender,
+	          rtpReceiver: rtpReceiver,
+	          kind: kind,
+	          mid: mid,
+	          sendSsrc: sendSsrc,
+	          recvSsrc: null
+	        };
+	        var transceiver = transceivers[sdpMLineIndex];
+	        sdp += SDPUtils.writeMediaSection(transceiver,
+	            transceiver.localCapabilities, 'offer', self.localStreams[0]);
+	      });
+
+	      this._pendingOffer = transceivers;
+	      var desc = new RTCSessionDescription({
+	        type: 'offer',
+	        sdp: sdp
+	      });
+	      if (arguments.length && typeof arguments[0] === 'function') {
+	        window.setTimeout(arguments[0], 0, desc);
+	      }
+	      return Promise.resolve(desc);
+	    };
+
+	    window.RTCPeerConnection.prototype.createAnswer = function() {
+	      var self = this;
+	      var answerOptions;
+	      if (arguments.length === 1 && typeof arguments[0] !== 'function') {
+	        answerOptions = arguments[0];
+	      } else if (arguments.length === 3) {
+	        answerOptions = arguments[2];
+	      }
+
+	      var sdp = SDPUtils.writeSessionBoilerplate();
+	      this.transceivers.forEach(function(transceiver) {
+	        // Calculate intersection of capabilities.
+	        var commonCapabilities = self._getCommonCapabilities(
+	            transceiver.localCapabilities,
+	            transceiver.remoteCapabilities);
+
+	        sdp += SDPUtils.writeMediaSection(transceiver, commonCapabilities,
+	            'answer', self.localStreams[0]);
+	      });
+
+	      var desc = new RTCSessionDescription({
+	        type: 'answer',
+	        sdp: sdp
+	      });
+	      if (arguments.length && typeof arguments[0] === 'function') {
+	        window.setTimeout(arguments[0], 0, desc);
+	      }
+	      return Promise.resolve(desc);
+	    };
+
+	    window.RTCPeerConnection.prototype.addIceCandidate = function(candidate) {
+	      var mLineIndex = candidate.sdpMLineIndex;
+	      if (candidate.sdpMid) {
+	        for (var i = 0; i < this.transceivers.length; i++) {
+	          if (this.transceivers[i].mid === candidate.sdpMid) {
+	            mLineIndex = i;
+	            break;
+	          }
+	        }
+	      }
+	      var transceiver = this.transceivers[mLineIndex];
+	      if (transceiver) {
+	        var cand = Object.keys(candidate.candidate).length > 0 ?
+	            SDPUtils.parseCandidate(candidate.candidate) : {};
+	        // Ignore Chrome's invalid candidates since Edge does not like them.
+	        if (cand.protocol === 'tcp' && cand.port === 0) {
+	          return;
+	        }
+	        // Ignore RTCP candidates, we assume RTCP-MUX.
+	        if (cand.component !== '1') {
+	          return;
+	        }
+	        // A dirty hack to make samples work.
+	        if (cand.type === 'endOfCandidates') {
+	          cand = {};
+	        }
+	        transceiver.iceTransport.addRemoteCandidate(cand);
+	      }
+	      if (arguments.length > 1 && typeof arguments[1] === 'function') {
+	        window.setTimeout(arguments[1], 0);
+	      }
+	      return Promise.resolve();
+	    };
+
+	    window.RTCPeerConnection.prototype.getStats = function() {
+	      var promises = [];
+	      this.transceivers.forEach(function(transceiver) {
+	        ['rtpSender', 'rtpReceiver', 'iceGatherer', 'iceTransport',
+	            'dtlsTransport'].forEach(function(method) {
+	          if (transceiver[method]) {
+	            promises.push(transceiver[method].getStats());
+	          }
+	        });
+	      });
+	      var cb = arguments.length > 1 && typeof arguments[1] === 'function' &&
+	          arguments[1];
+	      return new Promise(function(resolve) {
+	        var results = {};
+	        Promise.all(promises).then(function(res) {
+	          res.forEach(function(result) {
+	            Object.keys(result).forEach(function(id) {
+	              results[id] = result[id];
+	            });
+	          });
+	          if (cb) {
+	            window.setTimeout(cb, 0, results);
+	          }
+	          resolve(results);
+	        });
+	      });
+	    };
+	  }
 	} else {
 	  webrtcUtils.log('Browser does not appear to be WebRTC-capable');
 	}
@@ -1122,11 +2305,17 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	if (true) {
 	  var RTCPeerConnection;
+	  var RTCIceCandidate;
+	  var RTCSessionDescription;
 	  if (typeof window !== 'undefined') {
 	    RTCPeerConnection = window.RTCPeerConnection;
+	    RTCIceCandidate = window.RTCIceCandidate;
+	    RTCSessionDescription = window.RTCSessionDescription;
 	  }
 	  module.exports = {
 	    RTCPeerConnection: RTCPeerConnection,
+	    RTCIceCandidate: RTCIceCandidate,
+	    RTCSessionDescription: RTCSessionDescription,
 	    getUserMedia: getUserMedia,
 	    attachMediaStream: attachMediaStream,
 	    reattachMediaStream: reattachMediaStream,
@@ -1143,6 +2332,8 @@ return /******/ (function(modules) { // webpackBootstrap
 	  define([], function() {
 	    return {
 	      RTCPeerConnection: window.RTCPeerConnection,
+	      RTCIceCandidate: window.RTCIceCandidate,
+	      RTCSessionDescription: window.RTCSessionDescription,
 	      getUserMedia: getUserMedia,
 	      attachMediaStream: attachMediaStream,
 	      reattachMediaStream: reattachMediaStream,
@@ -1162,74 +2353,16 @@ return /******/ (function(modules) { // webpackBootstrap
 /* 5 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;// Last time updated at Tuesday, October 27th, 2015, 4:33:33 PM 
+	var __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;'use strict';
 
-	// links:
+	// Last time updated: 2016-02-25 8:42:56 AM UTC
+
 	// Open-Sourced: https://github.com/muaz-khan/RecordRTC
-	// https://cdn.WebRTC-Experiment.com/RecordRTC.js
-	// https://www.WebRTC-Experiment.com/RecordRTC.js
-	// npm install recordrtc
-	// http://recordrtc.org/
 
-	// updates?
-	/*
-	-. Added support for MediaRecorder API in Chrome. Currently requires: RecordRTC(stream, {recorderType: MediaStreamRecorder})
-	-. mimeType, bitsPerSecond, audioBitsPerSecond, videoBitsPerSecond added.
-	-. CanvasRecorder.js updated to support Firefox. (experimental)
-	-. Now you can reuse single RecordRTC object i.e. stop/start/stop/start/ and so on.
-	-. GifRecorder.js can now record HTMLCanvasElement|CanvasRenderingContext2D as well.
-	-. added: frameInterval:20 for WhammyRecorder.js
-	-. chrome issue  audio plus 720p-video recording can be fixed by setting bufferSize:16384
-	-. fixed Firefox save-as dialog i.e. recordRTC.save('filen-name')
-	-. "indexedDB" bug fixed for Firefox.
-	-. numberOfAudioChannels:1 can be passed to reduce WAV size in Chrome.
-	-. StereoRecorder.js is removed. It was redundant. Now RecordRTC is directly using: StereoAudioRecorder.js
-	-. mergeProps is removed. It was redundant.
-	-. reformatProps is removed. Now plz pass exact frameRate/sampleRate instead of frame-rate/sample-rate
-	-. Firefox supports remote-audio-recording since v28 - RecordRTC(remoteStream, { recorderType: StereoAudioRecorder });
-	-. added 3 methods: initRecorder, setRecordingDuration and clearRecordedData
-	-. Microsoft Edge support added (only-audio-yet).
-	-. You can pass "recorderType" - RecordRTC(stream, { recorderType: StereoAudioRecorder });
-	-. If MediaStream is suddenly stopped in Firefox.
-	-. Added "disableLogs"         - RecordRTC(stream, { disableLogs: true });
-	-. You can pass "bufferSize:0" - RecordRTC(stream, { bufferSize: 0 });
-	-. You can set "leftChannel"   - RecordRTC(stream, { leftChannel: true });
-	-. Added functionality for analyse black frames and cut them - pull#293
-	-. if you're recording GIF, you must link: https://cdn.webrtc-experiment.com/gif-recorder.js
-	-. You can set "frameInterval" for video - RecordRTC(stream, { type: 'video', frameInterval: 100 });
-	*/
-
-	//------------------------------------
-
-	// Browsers Support::
-	// Chrome (all versions) [ audio/video separately ]
-	// Firefox ( >= 29 ) [ audio/video in single webm/mp4 container or only audio in ogg ]
-	// Opera (all versions) [ same as chrome ]
-	// Android (Chrome) [ only video ]
-	// Android (Opera) [ only video ]
-	// Android (Firefox) [ only video ]
-	// Microsoft Edge (Only Audio & Gif)
-
-	//------------------------------------
+	//--------------------------------------------------
 	// Muaz Khan     - www.MuazKhan.com
 	// MIT License   - www.WebRTC-Experiment.com/licence
-	//------------------------------------
-	// Note: RecordRTC.js is using 3 other libraries; you need to accept their licences as well.
-	//------------------------------------
-	// 1. RecordRTC.js
-	// 2. MRecordRTC.js
-	// 3. Cross-Browser-Declarations.js
-	// 4. Storage.js
-	// 5. MediaStreamRecorder.js
-	// 6. StereoAudioRecorder.js
-	// 7. CanvasRecorder.js
-	// 8. WhammyRecorder.js
-	// 9. Whammy.js
-	// 10. DiskStorage.js
-	// 11. GifRecorder.js
-	//------------------------------------
-
-	'use strict';
+	//--------------------------------------------------
 
 	// ____________
 	// RecordRTC.js
@@ -1383,6 +2516,10 @@ return /******/ (function(modules) { // webpackBootstrap
 	        }
 	    }
 
+	    function readFile(_blob) {
+	        postMessage(new FileReaderSync().readAsDataURL(_blob));
+	    }
+
 	    function getDataURL(callback, _mediaRecorder) {
 	        if (!callback) {
 	            throw 'Pass a callback function over getDataURL.';
@@ -1401,10 +2538,8 @@ return /******/ (function(modules) { // webpackBootstrap
 	            return;
 	        }
 
-	        if (typeof Worker !== 'undefined') {
-	            var webWorker = processInWebWorker(function readFile(_blob) {
-	                postMessage(new FileReaderSync().readAsDataURL(_blob));
-	            });
+	        if (typeof Worker !== 'undefined' && !navigator.mozGetUserMedia) {
+	            var webWorker = processInWebWorker(readFile);
 
 	            webWorker.onmessage = function(event) {
 	                callback(event.data);
@@ -1903,7 +3038,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	        }
 
 	        if (!config.bitsPerSecond) {
-	            config.bitsPerSecond = 128000;
+	            // config.bitsPerSecond = 128000;
 	        }
 	    }
 
@@ -1969,17 +3104,18 @@ return /******/ (function(modules) { // webpackBootstrap
 	    }
 
 	    // todo: enable below block when MediaRecorder in Chrome gets out of flags; and it also supports audio recording.
-	    if (false) {
+	    if (isMediaRecorderCompatible() && isChrome && recorder !== CanvasRecorder && recorder !== GifRecorder && typeof MediaRecorder !== 'undefined' && 'requestData' in MediaRecorder.prototype) {
 	        if (mediaStream.getVideoTracks().length) {
 	            recorder = MediaStreamRecorder;
-	            if (!config.disableLogs) {
-	                console.debug('Using MediaRecorder API in chrome!');
-	            }
 	        }
 	    }
 
 	    if (config.recorderType) {
 	        recorder = config.recorderType;
+	    }
+
+	    if (!config.disableLogs && isChrome && recorder === MediaStreamRecorder) {
+	        console.debug('Using MediaRecorder API in chrome!');
 	    }
 
 	    return recorder;
@@ -2032,9 +3168,9 @@ return /******/ (function(modules) { // webpackBootstrap
 	     * @example
 	     * var recorder = new MRecordRTC();
 	     * recorder.mediaType = {
-	     *     audio: true,
-	     *     video: true,
-	     *     gif  : true
+	     *     audio: true, // TRUE or StereoAudioRecorder or MediaStreamRecorder
+	     *     video: true, // TRUE or WhammyRecorder or MediaStreamRecorder
+	     *     gif  : true  // TRUE or GifRecorder
 	     * };
 	     */
 	    this.mediaType = {
@@ -2050,34 +3186,69 @@ return /******/ (function(modules) { // webpackBootstrap
 	     * recorder.startRecording();
 	     */
 	    this.startRecording = function() {
-	        if (!isChrome && mediaStream && mediaStream.getAudioTracks && mediaStream.getAudioTracks().length && mediaStream.getVideoTracks().length) {
+	        var mediaType = this.mediaType;
+	        var recorderType;
+
+	        if (typeof mediaType.audio !== 'function' && isMediaRecorderCompatible() && mediaStream && mediaStream.getAudioTracks && mediaStream.getAudioTracks().length && mediaStream.getVideoTracks().length) {
 	            // Firefox is supporting both audio/video in single blob
 	            this.mediaType.audio = false;
 	        }
 
-	        if (this.mediaType.audio) {
+	        if (!!mediaType.audio) {
+	            if (typeof mediaType.audio === 'function') {
+	                recorderType = mediaType.audio;
+	            }
 	            this.audioRecorder = new RecordRTC(mediaStream, {
 	                type: 'audio',
 	                bufferSize: this.bufferSize,
-	                sampleRate: this.sampleRate
+	                sampleRate: this.sampleRate,
+	                numberOfAudioChannels: this.numberOfAudioChannels || 2,
+	                disableLogs: this.disableLogs,
+	                recorderType: recorderType
 	            });
-	            this.audioRecorder.startRecording();
+	            if (!mediaType.video) {
+	                this.audioRecorder.startRecording();
+	            }
 	        }
 
-	        if (this.mediaType.video) {
+	        if (!!mediaType.video) {
+	            if (typeof mediaType.video === 'function') {
+	                recorderType = mediaType.video;
+	            }
 	            this.videoRecorder = new RecordRTC(mediaStream, {
 	                type: 'video',
 	                video: this.video,
-	                canvas: this.canvas
+	                canvas: this.canvas,
+	                frameInterval: this.frameInterval || 10,
+	                disableLogs: this.disableLogs,
+	                recorderType: recorderType
 	            });
-	            this.videoRecorder.startRecording();
+	            if (!mediaType.audio) {
+	                this.videoRecorder.startRecording();
+	            }
 	        }
 
-	        if (this.mediaType.gif) {
+	        if (!!mediaType.audio && !!mediaType.video) {
+	            var self = this;
+	            self.videoRecorder.initRecorder(function() {
+	                self.audioRecorder.initRecorder(function() {
+	                    // Both recorders are ready to record things accurately
+	                    self.videoRecorder.startRecording();
+	                    self.audioRecorder.startRecording();
+	                });
+	            });
+	        }
+
+	        if (!!mediaType.gif) {
+	            if (typeof mediaType.gif === 'function') {
+	                recorderType = mediaType.gif;
+	            }
 	            this.gifRecorder = new RecordRTC(mediaStream, {
 	                type: 'gif',
 	                frameRate: this.frameRate || 200,
-	                quality: this.quality || 10
+	                quality: this.quality || 10,
+	                disableLogs: this.disableLogs,
+	                recorderType: recorderType
 	            });
 	            this.gifRecorder.startRecording();
 	        }
@@ -2378,6 +3549,30 @@ return /******/ (function(modules) { // webpackBootstrap
 	/*global MediaStream:true */
 	if (typeof MediaStream !== 'undefined' && !('stop' in MediaStream.prototype)) {
 	    MediaStream.prototype.stop = function() {
+	        if (!this.getAudioTracks && !!this.getTracks) {
+	            this.getAudioTracks = function() {
+	                var array = [];
+	                this.getTracks.forEach(function(track) {
+	                    if (track.kind.toString().indexOf('audio') !== -1) {
+	                        array.push(track);
+	                    }
+	                });
+	                return array;
+	            };
+	        }
+
+	        if (!this.getVideoTracks && !!this.getTracks) {
+	            this.getVideoTracks = function() {
+	                var array = [];
+	                this.getTracks.forEach(function(track) {
+	                    if (track.kind.toString().indexOf('video') !== -1) {
+	                        array.push(track);
+	                    }
+	                });
+	                return array;
+	            };
+	        }
+
 	        this.getAudioTracks().forEach(function(track) {
 	            track.stop();
 	        });
@@ -2490,6 +3685,49 @@ return /******/ (function(modules) { // webpackBootstrap
 	    Storage.AudioContext = webkitAudioContext;
 	}
 
+	function isMediaRecorderCompatible() {
+	    var isOpera = !!window.opera || navigator.userAgent.indexOf(' OPR/') >= 0;
+	    var isChrome = !!window.chrome && !isOpera;
+	    var isFirefox = typeof window.InstallTrigger !== 'undefined';
+
+	    if (isFirefox) {
+	        return true;
+	    }
+
+	    if (!isChrome) {
+	        return false;
+	    }
+
+	    var nVer = navigator.appVersion;
+	    var nAgt = navigator.userAgent;
+	    var fullVersion = '' + parseFloat(navigator.appVersion);
+	    var majorVersion = parseInt(navigator.appVersion, 10);
+	    var nameOffset, verOffset, ix;
+
+	    if (isChrome) {
+	        verOffset = nAgt.indexOf('Chrome');
+	        fullVersion = nAgt.substring(verOffset + 7);
+	    }
+
+	    // trim the fullVersion string at semicolon/space if present
+	    if ((ix = fullVersion.indexOf(';')) !== -1) {
+	        fullVersion = fullVersion.substring(0, ix);
+	    }
+
+	    if ((ix = fullVersion.indexOf(' ')) !== -1) {
+	        fullVersion = fullVersion.substring(0, ix);
+	    }
+
+	    majorVersion = parseInt('' + fullVersion, 10);
+
+	    if (isNaN(majorVersion)) {
+	        fullVersion = '' + parseFloat(navigator.appVersion);
+	        majorVersion = parseInt(navigator.appVersion, 10);
+	    }
+
+	    return majorVersion >= 49;
+	}
+
 	// ______________________
 	// MediaStreamRecorder.js
 
@@ -2517,9 +3755,9 @@ return /******/ (function(modules) { // webpackBootstrap
 	 * @example
 	 * var options = {
 	 *     mimeType: 'video/mp4', // audio/ogg or video/webm
-	 *     audioBitsPerSecond : 128000,
-	 *     videoBitsPerSecond : 2500000,
-	 *     bitsPerSecond: 2500000  // if this is provided, skip above two
+	 *     audioBitsPerSecond : 256 * 8 * 1024,
+	 *     videoBitsPerSecond : 256 * 8 * 1024,
+	 *     bitsPerSecond: 256 * 8 * 1024  // if this is provided, skip above two
 	 * }
 	 * var recorder = new MediaStreamRecorder(MediaStream, options);
 	 * recorder.record();
@@ -2535,15 +3773,17 @@ return /******/ (function(modules) { // webpackBootstrap
 	 */
 
 	function MediaStreamRecorder(mediaStream, config) {
+	    var self = this;
+
 	    config = config || {
-	        bitsPerSecond: 128000,
+	        // bitsPerSecond: 256 * 8 * 1024,
 	        mimeType: 'video/webm'
 	    };
 
 	    // if user chosen only audio option; and he tried to pass MediaStream with
 	    // both audio and video tracks;
 	    // using a dirty workaround to generate audio-only stream so that we can get audio/ogg output.
-	    if (!isChrome && config.type && config.type === 'audio') {
+	    if (!!navigator.mozGetUserMedia && config.type && config.type === 'audio') {
 	        if (mediaStream.getVideoTracks && mediaStream.getVideoTracks().length) {
 	            var context = new AudioContext();
 	            var mediaStreamSource = context.createMediaStreamSource(mediaStream);
@@ -2571,15 +3811,6 @@ return /******/ (function(modules) { // webpackBootstrap
 	    this.record = function() {
 	        var recorderHints = config;
 
-	        if (isChrome) {
-	            if (!recorderHints || typeof recorderHints !== 'string') {
-	                recorderHints = 'video/vp8';
-
-	                // chrome currently supports only video recording
-	                mediaStream = new MediaStream(mediaStream.getVideoTracks());
-	            }
-	        }
-
 	        if (!config.disableLogs) {
 	            console.log('Passing following config over MediaRecorder API.', recorderHints);
 	        }
@@ -2587,6 +3818,11 @@ return /******/ (function(modules) { // webpackBootstrap
 	        if (mediaRecorder) {
 	            // mandatory to make sure Firefox doesn't fails to record streams 3-4 times without reloading the page.
 	            mediaRecorder = null;
+	        }
+
+	        if (isChrome && !isMediaRecorderCompatible()) {
+	            // to support video-only recording on stable
+	            recorderHints = 'video/vp8';
 	        }
 
 	        // http://dxr.mozilla.org/mozilla-central/source/content/media/MediaRecorder.cpp
@@ -2609,17 +3845,15 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	        // Dispatching OnDataAvailable Handler
 	        mediaRecorder.ondataavailable = function(e) {
-	            if (this.dontFireOnDataAvailableEvent) {
+	            if (self.dontFireOnDataAvailableEvent) {
 	                return;
 	            }
 
-	            if (isChrome && e.data && !('size' in e.data)) {
-	                e.data.size = e.data.length || e.data.byteLength || 0;
+	            if (!e.data || !e.data.size) {
+	                return;
 	            }
 
-	            if (e.data && e.data.size) {
-	                recordedBuffers.push(e.data);
-	            }
+	            recordedBuffers.push(e.data);
 	        };
 
 	        mediaRecorder.onerror = function(error) {
@@ -2671,6 +3905,35 @@ return /******/ (function(modules) { // webpackBootstrap
 	        }
 	    };
 
+	    // both "bufferToDataUrl" and "dataUrlToFile" are taken from "60devs.com"
+	    function bufferToDataUrl(buffer, callback) {
+	        var blob = new Blob(buffer, {
+	            type: 'video/webm'
+	        });
+
+	        var reader = new FileReader();
+	        reader.onload = function() {
+	            callback(reader.result);
+	        };
+	        reader.readAsDataURL(blob);
+	    }
+
+	    // returns file, that we can send to the server.
+	    function dataUrlToFile(dataUrl) {
+	        var binary = atob(dataUrl.split(',')[1]),
+	            data = [];
+
+	        for (var i = 0; i < binary.length; i++) {
+	            data.push(binary.charCodeAt(i));
+	        }
+
+	        var File = window.File || window.Blob;
+
+	        return new File([new Uint8Array(data)], 'recorded-video.webm', {
+	            type: 'video/webm'
+	        });
+	    }
+
 	    /**
 	     * This method stops recording MediaStream.
 	     * @param {function} callback - Callback function, that is used to pass recorded blob back to the callee.
@@ -2703,21 +3966,26 @@ return /******/ (function(modules) { // webpackBootstrap
 	    };
 
 	    this.onRecordingFinished = function() {
-	        /**
-	         * @property {Blob} blob - Recorded frames in video/webm blob.
-	         * @memberof MediaStreamRecorder
-	         * @example
-	         * recorder.stop(function() {
-	         *     var blob = recorder.blob;
-	         * });
-	         */
-	        this.blob = new Blob(recordedBuffers, {
-	            type: config.mimeType || 'video/webm'
+	        var that = this;
+
+	        bufferToDataUrl(recordedBuffers, function(dataURL) {
+	            var file = dataUrlToFile(dataURL);
+
+	            /**
+	             * @property {Blob} blob - Recorded frames in video/webm blob.
+	             * @memberof MediaStreamRecorder
+	             * @example
+	             * recorder.stop(function() {
+	             *     var blob = recorder.blob;
+	             * });
+	             */
+	            that.blob = new Blob(recordedBuffers, {
+	                type: config.mimeType || 'video/webm'
+	            });
+
+	            that.recordingCallback();
+	            recordedBuffers = [];
 	        });
-
-	        this.recordingCallback();
-
-	        recordedBuffers = [];
 	    };
 
 	    /**
@@ -3008,7 +4276,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	            view.setUint32(24, sampleRate, true);
 
 	            // byte rate (sample rate * block align)
-	            view.setUint32(28, sampleRate * 4, true);
+	            view.setUint32(28, sampleRate * 2, true);
 
 	            // block align (channel count * bytes per sample) 
 	            view.setUint16(32, numberOfAudioChannels * 2, true);
@@ -3358,11 +4626,14 @@ return /******/ (function(modules) { // webpackBootstrap
 	 */
 
 	function CanvasRecorder(htmlElement, config) {
-	    if (typeof html2canvas === 'undefined') {
+	    if (typeof html2canvas === 'undefined' && htmlElement.nodeName.toLowerCase() !== 'canvas') {
 	        throw 'Please link: //cdn.webrtc-experiment.com/screenshot.js';
 	    }
 
 	    config = config || {};
+	    if (!config.frameInterval) {
+	        config.frameInterval = 10;
+	    }
 
 	    // via DetectRTC.js
 	    var isCanvasSupportsStreamCapturing = false;
@@ -3371,6 +4642,10 @@ return /******/ (function(modules) { // webpackBootstrap
 	            isCanvasSupportsStreamCapturing = true;
 	        }
 	    });
+
+	    if (!!window.webkitRTCPeerConnection || !!window.webkitGetUserMedia) {
+	        isCanvasSupportsStreamCapturing = false;
+	    }
 
 	    var globalCanvas, globalContext, mediaStreamRecorder;
 
@@ -3404,6 +4679,8 @@ return /******/ (function(modules) { // webpackBootstrap
 	     * recorder.record();
 	     */
 	    this.record = function() {
+	        isRecording = true;
+
 	        if (isCanvasSupportsStreamCapturing) {
 	            // CanvasCaptureMediaStream
 	            var canvasMediaStream;
@@ -3415,24 +4692,55 @@ return /******/ (function(modules) { // webpackBootstrap
 	                canvasMediaStream = globalCanvas.captureStream(25);
 	            }
 
+	            try {
+	                var mdStream = new MediaStream();
+	                mdStream.addTrack(canvasMediaStream.getVideoTracks()[0]);
+	                canvasMediaStream = mdStream;
+	            } catch (e) {}
+
 	            if (!canvasMediaStream) {
 	                throw 'captureStream API are NOT available.';
 	            }
 
-	            // Note: Sep, 2015 status is that, MediaRecorder API can't record CanvasCaptureMediaStream object.
+	            // Note: Jan 18, 2016 status is that, 
+	            // Firefox MediaRecorder API can't record CanvasCaptureMediaStream object.
 	            mediaStreamRecorder = new MediaStreamRecorder(canvasMediaStream, {
 	                mimeType: 'video/webm'
 	            });
 	            mediaStreamRecorder.record();
+	        } else {
+	            whammy.frames = [];
+	            lastTime = new Date().getTime();
+	            drawCanvasFrame();
 	        }
-
-	        isRecording = true;
-	        whammy.frames = [];
-	        drawCanvasFrame();
 
 	        if (config.initCallback) {
 	            config.initCallback();
 	        }
+	    };
+
+	    this.getWebPImages = function(callback) {
+	        if (htmlElement.nodeName.toLowerCase() !== 'canvas') {
+	            callback();
+	            return;
+	        }
+
+	        var framesLength = whammy.frames.length;
+	        whammy.frames.forEach(function(frame, idx) {
+	            var framesRemaining = framesLength - idx;
+	            document.title = framesRemaining + '/' + framesLength + ' frames remaining';
+
+	            if (config.onEncodingCallback) {
+	                config.onEncodingCallback(framesRemaining, framesLength);
+	            }
+
+	            var webp = frame.image.toDataURL('image/webp', 1);
+	            whammy.frames[idx].image = webp;
+	        });
+
+	        document.title = 'Generating WebM';
+
+	        callback();
 	    };
 
 	    /**
@@ -3448,6 +4756,8 @@ return /******/ (function(modules) { // webpackBootstrap
 	    this.stop = function(callback) {
 	        isRecording = false;
 
+	        var that = this;
+
 	        if (isCanvasSupportsStreamCapturing && mediaStreamRecorder) {
 	            var slef = this;
 	            mediaStreamRecorder.stop(function() {
@@ -3461,30 +4771,32 @@ return /******/ (function(modules) { // webpackBootstrap
 	            return;
 	        }
 
-	        var that = this;
+	        this.getWebPImages(function() {
+	            /**
+	             * @property {Blob} blob - Recorded frames in video/webm blob.
+	             * @memberof CanvasRecorder
+	             * @example
+	             * recorder.stop(function() {
+	             *     var blob = recorder.blob;
+	             * });
+	             */
+	            whammy.compile(function(blob) {
+	                document.title = 'Recording finished!';
 
-	        /**
-	         * @property {Blob} blob - Recorded frames in video/webm blob.
-	         * @memberof CanvasRecorder
-	         * @example
-	         * recorder.stop(function() {
-	         *     var blob = recorder.blob;
-	         * });
-	         */
-	        whammy.compile(function(blob) {
-	            that.blob = blob;
+	                that.blob = blob;
 
-	            if (that.blob.forEach) {
-	                that.blob = new Blob([], {
-	                    type: 'video/webm'
-	                });
-	            }
+	                if (that.blob.forEach) {
+	                    that.blob = new Blob([], {
+	                        type: 'video/webm'
+	                    });
+	                }
 
-	            if (callback) {
-	                callback(that.blob);
-	            }
+	                if (callback) {
+	                    callback(that.blob);
+	                }
 
-	            whammy.frames = [];
+	                whammy.frames = [];
+	            });
 	        });
 	    };
 
@@ -3524,40 +4836,62 @@ return /******/ (function(modules) { // webpackBootstrap
 	        whammy.frames = [];
 	    };
 
+	    function cloneCanvas() {
+	        //create a new canvas
+	        var newCanvas = document.createElement('canvas');
+	        var context = newCanvas.getContext('2d');
+
+	        //set dimensions
+	        newCanvas.width = htmlElement.width;
+	        newCanvas.height = htmlElement.height;
+
+	        //apply the old canvas to the new one
+	        context.drawImage(htmlElement, 0, 0);
+
+	        //return the new canvas
+	        return newCanvas;
+	    }
+
 	    function drawCanvasFrame() {
 	        if (isPausedRecording) {
 	            lastTime = new Date().getTime();
-	            return setTimeout(drawCanvasFrame, 100);
+	            return setTimeout(drawCanvasFrame, 500);
+	        }
+
+	        if (htmlElement.nodeName.toLowerCase() === 'canvas') {
+	            var duration = new Date().getTime() - lastTime;
+	            // via #206, by Jack i.e. @Seymourr
+	            lastTime = new Date().getTime();
+
+	            whammy.frames.push({
+	                image: cloneCanvas(),
+	                duration: duration
+	            });
+
+	            if (isRecording) {
+	                setTimeout(drawCanvasFrame, config.frameInterval);
+	            }
+	            return;
 	        }
 
 	        html2canvas(htmlElement, {
+	            grabMouse: typeof config.showMousePointer === 'undefined' || config.showMousePointer,
 	            onrendered: function(canvas) {
-	                if (isCanvasSupportsStreamCapturing) {
-	                    var image = document.createElement('img');
-	                    image.src = canvas.toDataURL('image/png');
-	                    image.onload = function() {
-	                        globalContext.drawImage(image, 0, 0, image.clientWidth, image.clientHeight);
-	                        (document.body || document.documentElement).removeChild(image);
-	                    };
-	                    image.style.opacity = 0;
-	                    (document.body || document.documentElement).appendChild(image);
-	                } else {
-	                    var duration = new Date().getTime() - lastTime;
-	                    if (!duration) {
-	                        return drawCanvasFrame();
-	                    }
-
-	                    // via #206, by Jack i.e. @Seymourr
-	                    lastTime = new Date().getTime();
-
-	                    whammy.frames.push({
-	                        duration: duration,
-	                        image: canvas.toDataURL('image/webp')
-	                    });
+	                var duration = new Date().getTime() - lastTime;
+	                if (!duration) {
+	                    return setTimeout(drawCanvasFrame, config.frameInterval);
 	                }
 
+	                // via #206, by Jack i.e. @Seymourr
+	                lastTime = new Date().getTime();
+
+	                whammy.frames.push({
+	                    image: canvas.toDataURL('image/webp', 1),
+	                    duration: duration
+	                });
+
 	                if (isRecording) {
-	                    setTimeout(drawCanvasFrame, 0);
+	                    setTimeout(drawCanvasFrame, config.frameInterval);
 	                }
 	            }
 	        });
@@ -4315,10 +5649,6 @@ return /******/ (function(modules) { // webpackBootstrap
 	            return webp;
 	        }));
 
-	        if (!!navigator.mozGetUserMedia) {
-	            return webm;
-	        }
-
 	        postMessage(webm);
 	    }
 
@@ -4334,10 +5664,6 @@ return /******/ (function(modules) { // webpackBootstrap
 	     * });
 	     */
 	    WhammyVideo.prototype.compile = function(callback) {
-	        if (!!navigator.mozGetUserMedia) {
-	            callback(whammyInWebWorker(this.frames));
-	            return;
-	        }
 	        var webWorker = processInWebWorker(whammyInWebWorker);
 
 	        webWorker.onmessage = function(event) {
@@ -4802,1605 +6128,2553 @@ return /******/ (function(modules) { // webpackBootstrap
 /* 6 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var require;var __WEBPACK_AMD_DEFINE_RESULT__;/* WEBPACK VAR INJECTION */(function(process, global, module) {/*!
+	var require;/* WEBPACK VAR INJECTION */(function(process, global) {/*!
 	 * @overview RSVP - a tiny implementation of Promises/A+.
-	 * @copyright Copyright (c) 2014 Yehuda Katz, Tom Dale, Stefan Penner and contributors
+	 * @copyright Copyright (c) 2016 Yehuda Katz, Tom Dale, Stefan Penner and contributors
 	 * @license   Licensed under MIT license
 	 *            See https://raw.githubusercontent.com/tildeio/rsvp.js/master/LICENSE
-	 * @version   3.1.0
+	 * @version   3.6.2
 	 */
 
-	(function() {
-	    "use strict";
-	    function lib$rsvp$utils$$objectOrFunction(x) {
-	      return typeof x === 'function' || (typeof x === 'object' && x !== null);
+	(function (global, factory) {
+		true ? factory(exports) :
+		typeof define === 'function' && define.amd ? define(['exports'], factory) :
+		(factory((global.RSVP = global.RSVP || {})));
+	}(this, (function (exports) { 'use strict';
+
+	function indexOf(callbacks, callback) {
+	  for (var i = 0, l = callbacks.length; i < l; i++) {
+	    if (callbacks[i] === callback) {
+	      return i;
 	    }
+	  }
 
-	    function lib$rsvp$utils$$isFunction(x) {
-	      return typeof x === 'function';
-	    }
+	  return -1;
+	}
 
-	    function lib$rsvp$utils$$isMaybeThenable(x) {
-	      return typeof x === 'object' && x !== null;
-	    }
+	function callbacksFor(object) {
+	  var callbacks = object._promiseCallbacks;
 
-	    var lib$rsvp$utils$$_isArray;
-	    if (!Array.isArray) {
-	      lib$rsvp$utils$$_isArray = function (x) {
-	        return Object.prototype.toString.call(x) === '[object Array]';
-	      };
-	    } else {
-	      lib$rsvp$utils$$_isArray = Array.isArray;
-	    }
+	  if (!callbacks) {
+	    callbacks = object._promiseCallbacks = {};
+	  }
 
-	    var lib$rsvp$utils$$isArray = lib$rsvp$utils$$_isArray;
+	  return callbacks;
+	}
 
-	    var lib$rsvp$utils$$now = Date.now || function() { return new Date().getTime(); };
+	/**
+	  @class RSVP.EventTarget
+	*/
+	var EventTarget = {
 
-	    function lib$rsvp$utils$$F() { }
-
-	    var lib$rsvp$utils$$o_create = (Object.create || function (o) {
-	      if (arguments.length > 1) {
-	        throw new Error('Second argument not supported');
-	      }
-	      if (typeof o !== 'object') {
-	        throw new TypeError('Argument must be an object');
-	      }
-	      lib$rsvp$utils$$F.prototype = o;
-	      return new lib$rsvp$utils$$F();
+	  /**
+	    `RSVP.EventTarget.mixin` extends an object with EventTarget methods. For
+	    Example:
+	     ```javascript
+	    let object = {};
+	     RSVP.EventTarget.mixin(object);
+	     object.on('finished', function(event) {
+	      // handle event
 	    });
-	    function lib$rsvp$events$$indexOf(callbacks, callback) {
-	      for (var i=0, l=callbacks.length; i<l; i++) {
-	        if (callbacks[i] === callback) { return i; }
-	      }
+	     object.trigger('finished', { detail: value });
+	    ```
+	     `EventTarget.mixin` also works with prototypes:
+	     ```javascript
+	    let Person = function() {};
+	    RSVP.EventTarget.mixin(Person.prototype);
+	     let yehuda = new Person();
+	    let tom = new Person();
+	     yehuda.on('poke', function(event) {
+	      console.log('Yehuda says OW');
+	    });
+	     tom.on('poke', function(event) {
+	      console.log('Tom says OW');
+	    });
+	     yehuda.trigger('poke');
+	    tom.trigger('poke');
+	    ```
+	     @method mixin
+	    @for RSVP.EventTarget
+	    @private
+	    @param {Object} object object to extend with EventTarget methods
+	  */
+	  mixin: function (object) {
+	    object['on'] = this['on'];
+	    object['off'] = this['off'];
+	    object['trigger'] = this['trigger'];
+	    object._promiseCallbacks = undefined;
+	    return object;
+	  },
 
-	      return -1;
+
+	  /**
+	    Registers a callback to be executed when `eventName` is triggered
+	     ```javascript
+	    object.on('event', function(eventInfo){
+	      // handle the event
+	    });
+	     object.trigger('event');
+	    ```
+	     @method on
+	    @for RSVP.EventTarget
+	    @private
+	    @param {String} eventName name of the event to listen for
+	    @param {Function} callback function to be called when the event is triggered.
+	  */
+	  on: function (eventName, callback) {
+	    if (typeof callback !== 'function') {
+	      throw new TypeError('Callback must be a function');
 	    }
 
-	    function lib$rsvp$events$$callbacksFor(object) {
-	      var callbacks = object._promiseCallbacks;
+	    var allCallbacks = callbacksFor(this),
+	        callbacks = void 0;
 
-	      if (!callbacks) {
-	        callbacks = object._promiseCallbacks = {};
-	      }
+	    callbacks = allCallbacks[eventName];
 
-	      return callbacks;
+	    if (!callbacks) {
+	      callbacks = allCallbacks[eventName] = [];
 	    }
 
-	    var lib$rsvp$events$$default = {
+	    if (indexOf(callbacks, callback) === -1) {
+	      callbacks.push(callback);
+	    }
+	  },
 
-	      /**
-	        `RSVP.EventTarget.mixin` extends an object with EventTarget methods. For
-	        Example:
 
-	        ```javascript
-	        var object = {};
+	  /**
+	    You can use `off` to stop firing a particular callback for an event:
+	     ```javascript
+	    function doStuff() { // do stuff! }
+	    object.on('stuff', doStuff);
+	     object.trigger('stuff'); // doStuff will be called
+	     // Unregister ONLY the doStuff callback
+	    object.off('stuff', doStuff);
+	    object.trigger('stuff'); // doStuff will NOT be called
+	    ```
+	     If you don't pass a `callback` argument to `off`, ALL callbacks for the
+	    event will not be executed when the event fires. For example:
+	     ```javascript
+	    let callback1 = function(){};
+	    let callback2 = function(){};
+	     object.on('stuff', callback1);
+	    object.on('stuff', callback2);
+	     object.trigger('stuff'); // callback1 and callback2 will be executed.
+	     object.off('stuff');
+	    object.trigger('stuff'); // callback1 and callback2 will not be executed!
+	    ```
+	     @method off
+	    @for RSVP.EventTarget
+	    @private
+	    @param {String} eventName event to stop listening to
+	    @param {Function} callback optional argument. If given, only the function
+	    given will be removed from the event's callback queue. If no `callback`
+	    argument is given, all callbacks will be removed from the event's callback
+	    queue.
+	  */
+	  off: function (eventName, callback) {
+	    var allCallbacks = callbacksFor(this),
+	        callbacks = void 0,
+	        index = void 0;
 
-	        RSVP.EventTarget.mixin(object);
+	    if (!callback) {
+	      allCallbacks[eventName] = [];
+	      return;
+	    }
 
-	        object.on('finished', function(event) {
-	          // handle event
-	        });
+	    callbacks = allCallbacks[eventName];
 
-	        object.trigger('finished', { detail: value });
-	        ```
+	    index = indexOf(callbacks, callback);
 
-	        `EventTarget.mixin` also works with prototypes:
+	    if (index !== -1) {
+	      callbacks.splice(index, 1);
+	    }
+	  },
 
-	        ```javascript
-	        var Person = function() {};
-	        RSVP.EventTarget.mixin(Person.prototype);
 
-	        var yehuda = new Person();
-	        var tom = new Person();
+	  /**
+	    Use `trigger` to fire custom events. For example:
+	     ```javascript
+	    object.on('foo', function(){
+	      console.log('foo event happened!');
+	    });
+	    object.trigger('foo');
+	    // 'foo event happened!' logged to the console
+	    ```
+	     You can also pass a value as a second argument to `trigger` that will be
+	    passed as an argument to all event listeners for the event:
+	     ```javascript
+	    object.on('foo', function(value){
+	      console.log(value.name);
+	    });
+	     object.trigger('foo', { name: 'bar' });
+	    // 'bar' logged to the console
+	    ```
+	     @method trigger
+	    @for RSVP.EventTarget
+	    @private
+	    @param {String} eventName name of the event to be triggered
+	    @param {*} options optional value to be passed to any event handlers for
+	    the given `eventName`
+	  */
+	  trigger: function (eventName, options, label) {
+	    var allCallbacks = callbacksFor(this),
+	        callbacks = void 0,
+	        callback = void 0;
 
-	        yehuda.on('poke', function(event) {
-	          console.log('Yehuda says OW');
-	        });
+	    if (callbacks = allCallbacks[eventName]) {
+	      // Don't cache the callbacks.length since it may grow
+	      for (var i = 0; i < callbacks.length; i++) {
+	        callback = callbacks[i];
 
-	        tom.on('poke', function(event) {
-	          console.log('Tom says OW');
-	        });
-
-	        yehuda.trigger('poke');
-	        tom.trigger('poke');
-	        ```
-
-	        @method mixin
-	        @for RSVP.EventTarget
-	        @private
-	        @param {Object} object object to extend with EventTarget methods
-	      */
-	      'mixin': function(object) {
-	        object['on']      = this['on'];
-	        object['off']     = this['off'];
-	        object['trigger'] = this['trigger'];
-	        object._promiseCallbacks = undefined;
-	        return object;
-	      },
-
-	      /**
-	        Registers a callback to be executed when `eventName` is triggered
-
-	        ```javascript
-	        object.on('event', function(eventInfo){
-	          // handle the event
-	        });
-
-	        object.trigger('event');
-	        ```
-
-	        @method on
-	        @for RSVP.EventTarget
-	        @private
-	        @param {String} eventName name of the event to listen for
-	        @param {Function} callback function to be called when the event is triggered.
-	      */
-	      'on': function(eventName, callback) {
-	        if (typeof callback !== 'function') {
-	          throw new TypeError('Callback must be a function');
-	        }
-
-	        var allCallbacks = lib$rsvp$events$$callbacksFor(this), callbacks;
-
-	        callbacks = allCallbacks[eventName];
-
-	        if (!callbacks) {
-	          callbacks = allCallbacks[eventName] = [];
-	        }
-
-	        if (lib$rsvp$events$$indexOf(callbacks, callback) === -1) {
-	          callbacks.push(callback);
-	        }
-	      },
-
-	      /**
-	        You can use `off` to stop firing a particular callback for an event:
-
-	        ```javascript
-	        function doStuff() { // do stuff! }
-	        object.on('stuff', doStuff);
-
-	        object.trigger('stuff'); // doStuff will be called
-
-	        // Unregister ONLY the doStuff callback
-	        object.off('stuff', doStuff);
-	        object.trigger('stuff'); // doStuff will NOT be called
-	        ```
-
-	        If you don't pass a `callback` argument to `off`, ALL callbacks for the
-	        event will not be executed when the event fires. For example:
-
-	        ```javascript
-	        var callback1 = function(){};
-	        var callback2 = function(){};
-
-	        object.on('stuff', callback1);
-	        object.on('stuff', callback2);
-
-	        object.trigger('stuff'); // callback1 and callback2 will be executed.
-
-	        object.off('stuff');
-	        object.trigger('stuff'); // callback1 and callback2 will not be executed!
-	        ```
-
-	        @method off
-	        @for RSVP.EventTarget
-	        @private
-	        @param {String} eventName event to stop listening to
-	        @param {Function} callback optional argument. If given, only the function
-	        given will be removed from the event's callback queue. If no `callback`
-	        argument is given, all callbacks will be removed from the event's callback
-	        queue.
-	      */
-	      'off': function(eventName, callback) {
-	        var allCallbacks = lib$rsvp$events$$callbacksFor(this), callbacks, index;
-
-	        if (!callback) {
-	          allCallbacks[eventName] = [];
-	          return;
-	        }
-
-	        callbacks = allCallbacks[eventName];
-
-	        index = lib$rsvp$events$$indexOf(callbacks, callback);
-
-	        if (index !== -1) { callbacks.splice(index, 1); }
-	      },
-
-	      /**
-	        Use `trigger` to fire custom events. For example:
-
-	        ```javascript
-	        object.on('foo', function(){
-	          console.log('foo event happened!');
-	        });
-	        object.trigger('foo');
-	        // 'foo event happened!' logged to the console
-	        ```
-
-	        You can also pass a value as a second argument to `trigger` that will be
-	        passed as an argument to all event listeners for the event:
-
-	        ```javascript
-	        object.on('foo', function(value){
-	          console.log(value.name);
-	        });
-
-	        object.trigger('foo', { name: 'bar' });
-	        // 'bar' logged to the console
-	        ```
-
-	        @method trigger
-	        @for RSVP.EventTarget
-	        @private
-	        @param {String} eventName name of the event to be triggered
-	        @param {*} options optional value to be passed to any event handlers for
-	        the given `eventName`
-	      */
-	      'trigger': function(eventName, options, label) {
-	        var allCallbacks = lib$rsvp$events$$callbacksFor(this), callbacks, callback;
-
-	        if (callbacks = allCallbacks[eventName]) {
-	          // Don't cache the callbacks.length since it may grow
-	          for (var i=0; i<callbacks.length; i++) {
-	            callback = callbacks[i];
-
-	            callback(options, label);
-	          }
-	        }
+	        callback(options, label);
 	      }
-	    };
+	    }
+	  }
+	};
 
-	    var lib$rsvp$config$$config = {
-	      instrument: false
-	    };
+	var config = {
+	  instrument: false
+	};
 
-	    lib$rsvp$events$$default['mixin'](lib$rsvp$config$$config);
+	EventTarget['mixin'](config);
 
-	    function lib$rsvp$config$$configure(name, value) {
-	      if (name === 'onerror') {
-	        // handle for legacy users that expect the actual
-	        // error to be passed to their function added via
-	        // `RSVP.configure('onerror', someFunctionHere);`
-	        lib$rsvp$config$$config['on']('error', value);
+	function configure(name, value) {
+	  if (arguments.length === 2) {
+	    config[name] = value;
+	  } else {
+	    return config[name];
+	  }
+	}
+
+	function objectOrFunction(x) {
+	  var type = typeof x;
+	  return x !== null && (type === 'object' || type === 'function');
+	}
+
+	function isFunction(x) {
+	  return typeof x === 'function';
+	}
+
+	function isObject(x) {
+	  return x !== null && typeof x === 'object';
+	}
+
+	function isMaybeThenable(x) {
+	  return x !== null && typeof x === 'object';
+	}
+
+	var _isArray = void 0;
+	if (Array.isArray) {
+	  _isArray = Array.isArray;
+	} else {
+	  _isArray = function (x) {
+	    return Object.prototype.toString.call(x) === '[object Array]';
+	  };
+	}
+
+	var isArray = _isArray;
+
+	// Date.now is not available in browsers < IE9
+	// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/now#Compatibility
+	var now = Date.now || function () {
+	  return new Date().getTime();
+	};
+
+	var queue = [];
+
+	function scheduleFlush() {
+	  setTimeout(function () {
+	    for (var i = 0; i < queue.length; i++) {
+	      var entry = queue[i];
+
+	      var payload = entry.payload;
+
+	      payload.guid = payload.key + payload.id;
+	      payload.childGuid = payload.key + payload.childId;
+	      if (payload.error) {
+	        payload.stack = payload.error.stack;
+	      }
+
+	      config['trigger'](entry.name, entry.payload);
+	    }
+	    queue.length = 0;
+	  }, 50);
+	}
+
+	function instrument(eventName, promise, child) {
+	  if (1 === queue.push({
+	    name: eventName,
+	    payload: {
+	      key: promise._guidKey,
+	      id: promise._id,
+	      eventName: eventName,
+	      detail: promise._result,
+	      childId: child && child._id,
+	      label: promise._label,
+	      timeStamp: now(),
+	      error: config["instrument-with-stack"] ? new Error(promise._label) : null
+	    } })) {
+	    scheduleFlush();
+	  }
+	}
+
+	/**
+	  `RSVP.Promise.resolve` returns a promise that will become resolved with the
+	  passed `value`. It is shorthand for the following:
+
+	  ```javascript
+	  let promise = new RSVP.Promise(function(resolve, reject){
+	    resolve(1);
+	  });
+
+	  promise.then(function(value){
+	    // value === 1
+	  });
+	  ```
+
+	  Instead of writing the above, your code now simply becomes the following:
+
+	  ```javascript
+	  let promise = RSVP.Promise.resolve(1);
+
+	  promise.then(function(value){
+	    // value === 1
+	  });
+	  ```
+
+	  @method resolve
+	  @static
+	  @param {*} object value that the returned promise will be resolved with
+	  @param {String} label optional string for identifying the returned promise.
+	  Useful for tooling.
+	  @return {Promise} a promise that will become fulfilled with the given
+	  `value`
+	*/
+	function resolve$1(object, label) {
+	  /*jshint validthis:true */
+	  var Constructor = this;
+
+	  if (object && typeof object === 'object' && object.constructor === Constructor) {
+	    return object;
+	  }
+
+	  var promise = new Constructor(noop, label);
+	  resolve(promise, object);
+	  return promise;
+	}
+
+	function withOwnPromise() {
+	  return new TypeError('A promises callback cannot return that same promise.');
+	}
+
+	function noop() {}
+
+	var PENDING = void 0;
+	var FULFILLED = 1;
+	var REJECTED = 2;
+
+	var GET_THEN_ERROR = new ErrorObject();
+
+	function getThen(promise) {
+	  try {
+	    return promise.then;
+	  } catch (error) {
+	    GET_THEN_ERROR.error = error;
+	    return GET_THEN_ERROR;
+	  }
+	}
+
+	function tryThen(then$$1, value, fulfillmentHandler, rejectionHandler) {
+	  try {
+	    then$$1.call(value, fulfillmentHandler, rejectionHandler);
+	  } catch (e) {
+	    return e;
+	  }
+	}
+
+	function handleForeignThenable(promise, thenable, then$$1) {
+	  config.async(function (promise) {
+	    var sealed = false;
+	    var error = tryThen(then$$1, thenable, function (value) {
+	      if (sealed) {
 	        return;
 	      }
-
-	      if (arguments.length === 2) {
-	        lib$rsvp$config$$config[name] = value;
+	      sealed = true;
+	      if (thenable !== value) {
+	        resolve(promise, value, undefined);
 	      } else {
-	        return lib$rsvp$config$$config[name];
+	        fulfill(promise, value);
 	      }
-	    }
-
-	    var lib$rsvp$instrument$$queue = [];
-
-	    function lib$rsvp$instrument$$scheduleFlush() {
-	      setTimeout(function() {
-	        var entry;
-	        for (var i = 0; i < lib$rsvp$instrument$$queue.length; i++) {
-	          entry = lib$rsvp$instrument$$queue[i];
-
-	          var payload = entry.payload;
-
-	          payload.guid = payload.key + payload.id;
-	          payload.childGuid = payload.key + payload.childId;
-	          if (payload.error) {
-	            payload.stack = payload.error.stack;
-	          }
-
-	          lib$rsvp$config$$config['trigger'](entry.name, entry.payload);
-	        }
-	        lib$rsvp$instrument$$queue.length = 0;
-	      }, 50);
-	    }
-
-	    function lib$rsvp$instrument$$instrument(eventName, promise, child) {
-	      if (1 === lib$rsvp$instrument$$queue.push({
-	        name: eventName,
-	        payload: {
-	          key: promise._guidKey,
-	          id:  promise._id,
-	          eventName: eventName,
-	          detail: promise._result,
-	          childId: child && child._id,
-	          label: promise._label,
-	          timeStamp: lib$rsvp$utils$$now(),
-	          error: lib$rsvp$config$$config["instrument-with-stack"] ? new Error(promise._label) : null
-	        }})) {
-	          lib$rsvp$instrument$$scheduleFlush();
-	        }
+	    }, function (reason) {
+	      if (sealed) {
+	        return;
 	      }
-	    var lib$rsvp$instrument$$default = lib$rsvp$instrument$$instrument;
+	      sealed = true;
 
-	    function  lib$rsvp$$internal$$withOwnPromise() {
-	      return new TypeError('A promises callback cannot return that same promise.');
+	      reject(promise, reason);
+	    }, 'Settle: ' + (promise._label || ' unknown promise'));
+
+	    if (!sealed && error) {
+	      sealed = true;
+	      reject(promise, error);
 	    }
+	  }, promise);
+	}
 
-	    function lib$rsvp$$internal$$noop() {}
-
-	    var lib$rsvp$$internal$$PENDING   = void 0;
-	    var lib$rsvp$$internal$$FULFILLED = 1;
-	    var lib$rsvp$$internal$$REJECTED  = 2;
-
-	    var lib$rsvp$$internal$$GET_THEN_ERROR = new lib$rsvp$$internal$$ErrorObject();
-
-	    function lib$rsvp$$internal$$getThen(promise) {
-	      try {
-	        return promise.then;
-	      } catch(error) {
-	        lib$rsvp$$internal$$GET_THEN_ERROR.error = error;
-	        return lib$rsvp$$internal$$GET_THEN_ERROR;
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$tryThen(then, value, fulfillmentHandler, rejectionHandler) {
-	      try {
-	        then.call(value, fulfillmentHandler, rejectionHandler);
-	      } catch(e) {
-	        return e;
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$handleForeignThenable(promise, thenable, then) {
-	      lib$rsvp$config$$config.async(function(promise) {
-	        var sealed = false;
-	        var error = lib$rsvp$$internal$$tryThen(then, thenable, function(value) {
-	          if (sealed) { return; }
-	          sealed = true;
-	          if (thenable !== value) {
-	            lib$rsvp$$internal$$resolve(promise, value);
-	          } else {
-	            lib$rsvp$$internal$$fulfill(promise, value);
-	          }
-	        }, function(reason) {
-	          if (sealed) { return; }
-	          sealed = true;
-
-	          lib$rsvp$$internal$$reject(promise, reason);
-	        }, 'Settle: ' + (promise._label || ' unknown promise'));
-
-	        if (!sealed && error) {
-	          sealed = true;
-	          lib$rsvp$$internal$$reject(promise, error);
-	        }
-	      }, promise);
-	    }
-
-	    function lib$rsvp$$internal$$handleOwnThenable(promise, thenable) {
-	      if (thenable._state === lib$rsvp$$internal$$FULFILLED) {
-	        lib$rsvp$$internal$$fulfill(promise, thenable._result);
-	      } else if (thenable._state === lib$rsvp$$internal$$REJECTED) {
-	        thenable._onError = null;
-	        lib$rsvp$$internal$$reject(promise, thenable._result);
+	function handleOwnThenable(promise, thenable) {
+	  if (thenable._state === FULFILLED) {
+	    fulfill(promise, thenable._result);
+	  } else if (thenable._state === REJECTED) {
+	    thenable._onError = null;
+	    reject(promise, thenable._result);
+	  } else {
+	    subscribe(thenable, undefined, function (value) {
+	      if (thenable !== value) {
+	        resolve(promise, value, undefined);
 	      } else {
-	        lib$rsvp$$internal$$subscribe(thenable, undefined, function(value) {
-	          if (thenable !== value) {
-	            lib$rsvp$$internal$$resolve(promise, value);
-	          } else {
-	            lib$rsvp$$internal$$fulfill(promise, value);
-	          }
-	        }, function(reason) {
-	          lib$rsvp$$internal$$reject(promise, reason);
-	        });
+	        fulfill(promise, value);
 	      }
+	    }, function (reason) {
+	      return reject(promise, reason);
+	    });
+	  }
+	}
+
+	function handleMaybeThenable(promise, maybeThenable, then$$1) {
+	  var isOwnThenable = maybeThenable.constructor === promise.constructor && then$$1 === then && promise.constructor.resolve === resolve$1;
+
+	  if (isOwnThenable) {
+	    handleOwnThenable(promise, maybeThenable);
+	  } else if (then$$1 === GET_THEN_ERROR) {
+	    reject(promise, GET_THEN_ERROR.error);
+	    GET_THEN_ERROR.error = null;
+	  } else if (isFunction(then$$1)) {
+	    handleForeignThenable(promise, maybeThenable, then$$1);
+	  } else {
+	    fulfill(promise, maybeThenable);
+	  }
+	}
+
+	function resolve(promise, value) {
+	  if (promise === value) {
+	    fulfill(promise, value);
+	  } else if (objectOrFunction(value)) {
+	    handleMaybeThenable(promise, value, getThen(value));
+	  } else {
+	    fulfill(promise, value);
+	  }
+	}
+
+	function publishRejection(promise) {
+	  if (promise._onError) {
+	    promise._onError(promise._result);
+	  }
+
+	  publish(promise);
+	}
+
+	function fulfill(promise, value) {
+	  if (promise._state !== PENDING) {
+	    return;
+	  }
+
+	  promise._result = value;
+	  promise._state = FULFILLED;
+
+	  if (promise._subscribers.length === 0) {
+	    if (config.instrument) {
+	      instrument('fulfilled', promise);
 	    }
-
-	    function lib$rsvp$$internal$$handleMaybeThenable(promise, maybeThenable) {
-	      if (maybeThenable.constructor === promise.constructor) {
-	        lib$rsvp$$internal$$handleOwnThenable(promise, maybeThenable);
-	      } else {
-	        var then = lib$rsvp$$internal$$getThen(maybeThenable);
-
-	        if (then === lib$rsvp$$internal$$GET_THEN_ERROR) {
-	          lib$rsvp$$internal$$reject(promise, lib$rsvp$$internal$$GET_THEN_ERROR.error);
-	        } else if (then === undefined) {
-	          lib$rsvp$$internal$$fulfill(promise, maybeThenable);
-	        } else if (lib$rsvp$utils$$isFunction(then)) {
-	          lib$rsvp$$internal$$handleForeignThenable(promise, maybeThenable, then);
-	        } else {
-	          lib$rsvp$$internal$$fulfill(promise, maybeThenable);
-	        }
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$resolve(promise, value) {
-	      if (promise === value) {
-	        lib$rsvp$$internal$$fulfill(promise, value);
-	      } else if (lib$rsvp$utils$$objectOrFunction(value)) {
-	        lib$rsvp$$internal$$handleMaybeThenable(promise, value);
-	      } else {
-	        lib$rsvp$$internal$$fulfill(promise, value);
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$publishRejection(promise) {
-	      if (promise._onError) {
-	        promise._onError(promise._result);
-	      }
-
-	      lib$rsvp$$internal$$publish(promise);
-	    }
-
-	    function lib$rsvp$$internal$$fulfill(promise, value) {
-	      if (promise._state !== lib$rsvp$$internal$$PENDING) { return; }
-
-	      promise._result = value;
-	      promise._state = lib$rsvp$$internal$$FULFILLED;
-
-	      if (promise._subscribers.length === 0) {
-	        if (lib$rsvp$config$$config.instrument) {
-	          lib$rsvp$instrument$$default('fulfilled', promise);
-	        }
-	      } else {
-	        lib$rsvp$config$$config.async(lib$rsvp$$internal$$publish, promise);
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$reject(promise, reason) {
-	      if (promise._state !== lib$rsvp$$internal$$PENDING) { return; }
-	      promise._state = lib$rsvp$$internal$$REJECTED;
-	      promise._result = reason;
-	      lib$rsvp$config$$config.async(lib$rsvp$$internal$$publishRejection, promise);
-	    }
-
-	    function lib$rsvp$$internal$$subscribe(parent, child, onFulfillment, onRejection) {
-	      var subscribers = parent._subscribers;
-	      var length = subscribers.length;
-
-	      parent._onError = null;
-
-	      subscribers[length] = child;
-	      subscribers[length + lib$rsvp$$internal$$FULFILLED] = onFulfillment;
-	      subscribers[length + lib$rsvp$$internal$$REJECTED]  = onRejection;
-
-	      if (length === 0 && parent._state) {
-	        lib$rsvp$config$$config.async(lib$rsvp$$internal$$publish, parent);
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$publish(promise) {
-	      var subscribers = promise._subscribers;
-	      var settled = promise._state;
-
-	      if (lib$rsvp$config$$config.instrument) {
-	        lib$rsvp$instrument$$default(settled === lib$rsvp$$internal$$FULFILLED ? 'fulfilled' : 'rejected', promise);
-	      }
-
-	      if (subscribers.length === 0) { return; }
-
-	      var child, callback, detail = promise._result;
-
-	      for (var i = 0; i < subscribers.length; i += 3) {
-	        child = subscribers[i];
-	        callback = subscribers[i + settled];
-
-	        if (child) {
-	          lib$rsvp$$internal$$invokeCallback(settled, child, callback, detail);
-	        } else {
-	          callback(detail);
-	        }
-	      }
-
-	      promise._subscribers.length = 0;
-	    }
-
-	    function lib$rsvp$$internal$$ErrorObject() {
-	      this.error = null;
-	    }
-
-	    var lib$rsvp$$internal$$TRY_CATCH_ERROR = new lib$rsvp$$internal$$ErrorObject();
-
-	    function lib$rsvp$$internal$$tryCatch(callback, detail) {
-	      try {
-	        return callback(detail);
-	      } catch(e) {
-	        lib$rsvp$$internal$$TRY_CATCH_ERROR.error = e;
-	        return lib$rsvp$$internal$$TRY_CATCH_ERROR;
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$invokeCallback(settled, promise, callback, detail) {
-	      var hasCallback = lib$rsvp$utils$$isFunction(callback),
-	          value, error, succeeded, failed;
-
-	      if (hasCallback) {
-	        value = lib$rsvp$$internal$$tryCatch(callback, detail);
-
-	        if (value === lib$rsvp$$internal$$TRY_CATCH_ERROR) {
-	          failed = true;
-	          error = value.error;
-	          value = null;
-	        } else {
-	          succeeded = true;
-	        }
-
-	        if (promise === value) {
-	          lib$rsvp$$internal$$reject(promise, lib$rsvp$$internal$$withOwnPromise());
-	          return;
-	        }
-
-	      } else {
-	        value = detail;
-	        succeeded = true;
-	      }
-
-	      if (promise._state !== lib$rsvp$$internal$$PENDING) {
-	        // noop
-	      } else if (hasCallback && succeeded) {
-	        lib$rsvp$$internal$$resolve(promise, value);
-	      } else if (failed) {
-	        lib$rsvp$$internal$$reject(promise, error);
-	      } else if (settled === lib$rsvp$$internal$$FULFILLED) {
-	        lib$rsvp$$internal$$fulfill(promise, value);
-	      } else if (settled === lib$rsvp$$internal$$REJECTED) {
-	        lib$rsvp$$internal$$reject(promise, value);
-	      }
-	    }
-
-	    function lib$rsvp$$internal$$initializePromise(promise, resolver) {
-	      var resolved = false;
-	      try {
-	        resolver(function resolvePromise(value){
-	          if (resolved) { return; }
-	          resolved = true;
-	          lib$rsvp$$internal$$resolve(promise, value);
-	        }, function rejectPromise(reason) {
-	          if (resolved) { return; }
-	          resolved = true;
-	          lib$rsvp$$internal$$reject(promise, reason);
-	        });
-	      } catch(e) {
-	        lib$rsvp$$internal$$reject(promise, e);
-	      }
-	    }
-
-	    function lib$rsvp$enumerator$$makeSettledResult(state, position, value) {
-	      if (state === lib$rsvp$$internal$$FULFILLED) {
-	        return {
-	          state: 'fulfilled',
-	          value: value
-	        };
-	      } else {
-	         return {
-	          state: 'rejected',
-	          reason: value
-	        };
-	      }
-	    }
-
-	    function lib$rsvp$enumerator$$Enumerator(Constructor, input, abortOnReject, label) {
-	      var enumerator = this;
-
-	      enumerator._instanceConstructor = Constructor;
-	      enumerator.promise = new Constructor(lib$rsvp$$internal$$noop, label);
-	      enumerator._abortOnReject = abortOnReject;
-
-	      if (enumerator._validateInput(input)) {
-	        enumerator._input     = input;
-	        enumerator.length     = input.length;
-	        enumerator._remaining = input.length;
-
-	        enumerator._init();
-
-	        if (enumerator.length === 0) {
-	          lib$rsvp$$internal$$fulfill(enumerator.promise, enumerator._result);
-	        } else {
-	          enumerator.length = enumerator.length || 0;
-	          enumerator._enumerate();
-	          if (enumerator._remaining === 0) {
-	            lib$rsvp$$internal$$fulfill(enumerator.promise, enumerator._result);
-	          }
-	        }
-	      } else {
-	        lib$rsvp$$internal$$reject(enumerator.promise, enumerator._validationError());
-	      }
-	    }
-
-	    var lib$rsvp$enumerator$$default = lib$rsvp$enumerator$$Enumerator;
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._validateInput = function(input) {
-	      return lib$rsvp$utils$$isArray(input);
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._validationError = function() {
-	      return new Error('Array Methods must be provided an Array');
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._init = function() {
-	      this._result = new Array(this.length);
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._enumerate = function() {
-	      var enumerator = this;
-	      var length     = enumerator.length;
-	      var promise    = enumerator.promise;
-	      var input      = enumerator._input;
-
-	      for (var i = 0; promise._state === lib$rsvp$$internal$$PENDING && i < length; i++) {
-	        enumerator._eachEntry(input[i], i);
-	      }
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._eachEntry = function(entry, i) {
-	      var enumerator = this;
-	      var c = enumerator._instanceConstructor;
-	      if (lib$rsvp$utils$$isMaybeThenable(entry)) {
-	        if (entry.constructor === c && entry._state !== lib$rsvp$$internal$$PENDING) {
-	          entry._onError = null;
-	          enumerator._settledAt(entry._state, i, entry._result);
-	        } else {
-	          enumerator._willSettleAt(c.resolve(entry), i);
-	        }
-	      } else {
-	        enumerator._remaining--;
-	        enumerator._result[i] = enumerator._makeResult(lib$rsvp$$internal$$FULFILLED, i, entry);
-	      }
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._settledAt = function(state, i, value) {
-	      var enumerator = this;
-	      var promise = enumerator.promise;
-
-	      if (promise._state === lib$rsvp$$internal$$PENDING) {
-	        enumerator._remaining--;
-
-	        if (enumerator._abortOnReject && state === lib$rsvp$$internal$$REJECTED) {
-	          lib$rsvp$$internal$$reject(promise, value);
-	        } else {
-	          enumerator._result[i] = enumerator._makeResult(state, i, value);
-	        }
-	      }
-
-	      if (enumerator._remaining === 0) {
-	        lib$rsvp$$internal$$fulfill(promise, enumerator._result);
-	      }
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._makeResult = function(state, i, value) {
-	      return value;
-	    };
-
-	    lib$rsvp$enumerator$$Enumerator.prototype._willSettleAt = function(promise, i) {
-	      var enumerator = this;
-
-	      lib$rsvp$$internal$$subscribe(promise, undefined, function(value) {
-	        enumerator._settledAt(lib$rsvp$$internal$$FULFILLED, i, value);
-	      }, function(reason) {
-	        enumerator._settledAt(lib$rsvp$$internal$$REJECTED, i, reason);
-	      });
-	    };
-	    function lib$rsvp$promise$all$$all(entries, label) {
-	      return new lib$rsvp$enumerator$$default(this, entries, true /* abort on reject */, label).promise;
-	    }
-	    var lib$rsvp$promise$all$$default = lib$rsvp$promise$all$$all;
-	    function lib$rsvp$promise$race$$race(entries, label) {
-	      /*jshint validthis:true */
-	      var Constructor = this;
-
-	      var promise = new Constructor(lib$rsvp$$internal$$noop, label);
-
-	      if (!lib$rsvp$utils$$isArray(entries)) {
-	        lib$rsvp$$internal$$reject(promise, new TypeError('You must pass an array to race.'));
-	        return promise;
-	      }
-
-	      var length = entries.length;
-
-	      function onFulfillment(value) {
-	        lib$rsvp$$internal$$resolve(promise, value);
-	      }
-
-	      function onRejection(reason) {
-	        lib$rsvp$$internal$$reject(promise, reason);
-	      }
-
-	      for (var i = 0; promise._state === lib$rsvp$$internal$$PENDING && i < length; i++) {
-	        lib$rsvp$$internal$$subscribe(Constructor.resolve(entries[i]), undefined, onFulfillment, onRejection);
-	      }
-
-	      return promise;
-	    }
-	    var lib$rsvp$promise$race$$default = lib$rsvp$promise$race$$race;
-	    function lib$rsvp$promise$resolve$$resolve(object, label) {
-	      /*jshint validthis:true */
-	      var Constructor = this;
-
-	      if (object && typeof object === 'object' && object.constructor === Constructor) {
-	        return object;
-	      }
-
-	      var promise = new Constructor(lib$rsvp$$internal$$noop, label);
-	      lib$rsvp$$internal$$resolve(promise, object);
-	      return promise;
-	    }
-	    var lib$rsvp$promise$resolve$$default = lib$rsvp$promise$resolve$$resolve;
-	    function lib$rsvp$promise$reject$$reject(reason, label) {
-	      /*jshint validthis:true */
-	      var Constructor = this;
-	      var promise = new Constructor(lib$rsvp$$internal$$noop, label);
-	      lib$rsvp$$internal$$reject(promise, reason);
-	      return promise;
-	    }
-	    var lib$rsvp$promise$reject$$default = lib$rsvp$promise$reject$$reject;
-
-	    var lib$rsvp$promise$$guidKey = 'rsvp_' + lib$rsvp$utils$$now() + '-';
-	    var lib$rsvp$promise$$counter = 0;
-
-	    function lib$rsvp$promise$$needsResolver() {
-	      throw new TypeError('You must pass a resolver function as the first argument to the promise constructor');
-	    }
-
-	    function lib$rsvp$promise$$needsNew() {
-	      throw new TypeError("Failed to construct 'Promise': Please use the 'new' operator, this object constructor cannot be called as a function.");
-	    }
-
-	    function lib$rsvp$promise$$Promise(resolver, label) {
-	      var promise = this;
-
-	      promise._id = lib$rsvp$promise$$counter++;
-	      promise._label = label;
-	      promise._state = undefined;
-	      promise._result = undefined;
-	      promise._subscribers = [];
-
-	      if (lib$rsvp$config$$config.instrument) {
-	        lib$rsvp$instrument$$default('created', promise);
-	      }
-
-	      if (lib$rsvp$$internal$$noop !== resolver) {
-	        if (!lib$rsvp$utils$$isFunction(resolver)) {
-	          lib$rsvp$promise$$needsResolver();
-	        }
-
-	        if (!(promise instanceof lib$rsvp$promise$$Promise)) {
-	          lib$rsvp$promise$$needsNew();
-	        }
-
-	        lib$rsvp$$internal$$initializePromise(promise, resolver);
-	      }
-	    }
-
-	    var lib$rsvp$promise$$default = lib$rsvp$promise$$Promise;
-
-	    // deprecated
-	    lib$rsvp$promise$$Promise.cast = lib$rsvp$promise$resolve$$default;
-	    lib$rsvp$promise$$Promise.all = lib$rsvp$promise$all$$default;
-	    lib$rsvp$promise$$Promise.race = lib$rsvp$promise$race$$default;
-	    lib$rsvp$promise$$Promise.resolve = lib$rsvp$promise$resolve$$default;
-	    lib$rsvp$promise$$Promise.reject = lib$rsvp$promise$reject$$default;
-
-	    lib$rsvp$promise$$Promise.prototype = {
-	      constructor: lib$rsvp$promise$$Promise,
-
-	      _guidKey: lib$rsvp$promise$$guidKey,
-
-	      _onError: function (reason) {
-	        var promise = this;
-	        lib$rsvp$config$$config.after(function() {
-	          if (promise._onError) {
-	            lib$rsvp$config$$config['trigger']('error', reason, promise._label);
-	          }
-	        });
-	      },
-
-	    /**
-	      The primary way of interacting with a promise is through its `then` method,
-	      which registers callbacks to receive either a promise's eventual value or the
-	      reason why the promise cannot be fulfilled.
-
-	      ```js
-	      findUser().then(function(user){
-	        // user is available
-	      }, function(reason){
-	        // user is unavailable, and you are given the reason why
-	      });
-	      ```
-
-	      Chaining
-	      --------
-
-	      The return value of `then` is itself a promise.  This second, 'downstream'
-	      promise is resolved with the return value of the first promise's fulfillment
-	      or rejection handler, or rejected if the handler throws an exception.
-
-	      ```js
-	      findUser().then(function (user) {
-	        return user.name;
-	      }, function (reason) {
-	        return 'default name';
-	      }).then(function (userName) {
-	        // If `findUser` fulfilled, `userName` will be the user's name, otherwise it
-	        // will be `'default name'`
-	      });
-
-	      findUser().then(function (user) {
-	        throw new Error('Found user, but still unhappy');
-	      }, function (reason) {
-	        throw new Error('`findUser` rejected and we're unhappy');
-	      }).then(function (value) {
-	        // never reached
-	      }, function (reason) {
-	        // if `findUser` fulfilled, `reason` will be 'Found user, but still unhappy'.
-	        // If `findUser` rejected, `reason` will be '`findUser` rejected and we're unhappy'.
-	      });
-	      ```
-	      If the downstream promise does not specify a rejection handler, rejection reasons will be propagated further downstream.
-
-	      ```js
-	      findUser().then(function (user) {
-	        throw new PedagogicalException('Upstream error');
-	      }).then(function (value) {
-	        // never reached
-	      }).then(function (value) {
-	        // never reached
-	      }, function (reason) {
-	        // The `PedgagocialException` is propagated all the way down to here
-	      });
-	      ```
-
-	      Assimilation
-	      ------------
-
-	      Sometimes the value you want to propagate to a downstream promise can only be
-	      retrieved asynchronously. This can be achieved by returning a promise in the
-	      fulfillment or rejection handler. The downstream promise will then be pending
-	      until the returned promise is settled. This is called *assimilation*.
-
-	      ```js
-	      findUser().then(function (user) {
-	        return findCommentsByAuthor(user);
-	      }).then(function (comments) {
-	        // The user's comments are now available
-	      });
-	      ```
-
-	      If the assimliated promise rejects, then the downstream promise will also reject.
-
-	      ```js
-	      findUser().then(function (user) {
-	        return findCommentsByAuthor(user);
-	      }).then(function (comments) {
-	        // If `findCommentsByAuthor` fulfills, we'll have the value here
-	      }, function (reason) {
-	        // If `findCommentsByAuthor` rejects, we'll have the reason here
-	      });
-	      ```
-
-	      Simple Example
-	      --------------
-
-	      Synchronous Example
-
-	      ```javascript
-	      var result;
-
-	      try {
-	        result = findResult();
-	        // success
-	      } catch(reason) {
-	        // failure
-	      }
-	      ```
-
-	      Errback Example
-
-	      ```js
-	      findResult(function(result, err){
-	        if (err) {
-	          // failure
-	        } else {
-	          // success
-	        }
-	      });
-	      ```
-
-	      Promise Example;
-
-	      ```javascript
-	      findResult().then(function(result){
-	        // success
-	      }, function(reason){
-	        // failure
-	      });
-	      ```
-
-	      Advanced Example
-	      --------------
-
-	      Synchronous Example
-
-	      ```javascript
-	      var author, books;
-
-	      try {
-	        author = findAuthor();
-	        books  = findBooksByAuthor(author);
-	        // success
-	      } catch(reason) {
-	        // failure
-	      }
-	      ```
-
-	      Errback Example
-
-	      ```js
-
-	      function foundBooks(books) {
-
-	      }
-
-	      function failure(reason) {
-
-	      }
-
-	      findAuthor(function(author, err){
-	        if (err) {
-	          failure(err);
-	          // failure
-	        } else {
-	          try {
-	            findBoooksByAuthor(author, function(books, err) {
-	              if (err) {
-	                failure(err);
-	              } else {
-	                try {
-	                  foundBooks(books);
-	                } catch(reason) {
-	                  failure(reason);
-	                }
-	              }
-	            });
-	          } catch(error) {
-	            failure(err);
-	          }
-	          // success
-	        }
-	      });
-	      ```
-
-	      Promise Example;
-
-	      ```javascript
-	      findAuthor().
-	        then(findBooksByAuthor).
-	        then(function(books){
-	          // found books
-	      }).catch(function(reason){
-	        // something went wrong
-	      });
-	      ```
-
-	      @method then
-	      @param {Function} onFulfillment
-	      @param {Function} onRejection
-	      @param {String} label optional string for labeling the promise.
-	      Useful for tooling.
-	      @return {Promise}
-	    */
-	      then: function(onFulfillment, onRejection, label) {
-	        var parent = this;
-	        var state = parent._state;
-
-	        if (state === lib$rsvp$$internal$$FULFILLED && !onFulfillment || state === lib$rsvp$$internal$$REJECTED && !onRejection) {
-	          if (lib$rsvp$config$$config.instrument) {
-	            lib$rsvp$instrument$$default('chained', parent, parent);
-	          }
-	          return parent;
-	        }
-
-	        parent._onError = null;
-
-	        var child = new parent.constructor(lib$rsvp$$internal$$noop, label);
-	        var result = parent._result;
-
-	        if (lib$rsvp$config$$config.instrument) {
-	          lib$rsvp$instrument$$default('chained', parent, child);
-	        }
-
-	        if (state) {
-	          var callback = arguments[state - 1];
-	          lib$rsvp$config$$config.async(function(){
-	            lib$rsvp$$internal$$invokeCallback(state, child, callback, result);
-	          });
-	        } else {
-	          lib$rsvp$$internal$$subscribe(parent, child, onFulfillment, onRejection);
-	        }
-
-	        return child;
-	      },
-
-	    /**
-	      `catch` is simply sugar for `then(undefined, onRejection)` which makes it the same
-	      as the catch block of a try/catch statement.
-
-	      ```js
-	      function findAuthor(){
-	        throw new Error('couldn't find that author');
-	      }
-
-	      // synchronous
-	      try {
-	        findAuthor();
-	      } catch(reason) {
-	        // something went wrong
-	      }
-
-	      // async with promises
-	      findAuthor().catch(function(reason){
-	        // something went wrong
-	      });
-	      ```
-
-	      @method catch
-	      @param {Function} onRejection
-	      @param {String} label optional string for labeling the promise.
-	      Useful for tooling.
-	      @return {Promise}
-	    */
-	      'catch': function(onRejection, label) {
-	        return this.then(undefined, onRejection, label);
-	      },
-
-	    /**
-	      `finally` will be invoked regardless of the promise's fate just as native
-	      try/catch/finally behaves
-
-	      Synchronous example:
-
-	      ```js
-	      findAuthor() {
-	        if (Math.random() > 0.5) {
-	          throw new Error();
-	        }
-	        return new Author();
-	      }
-
-	      try {
-	        return findAuthor(); // succeed or fail
-	      } catch(error) {
-	        return findOtherAuther();
-	      } finally {
-	        // always runs
-	        // doesn't affect the return value
-	      }
-	      ```
-
-	      Asynchronous example:
-
-	      ```js
-	      findAuthor().catch(function(reason){
-	        return findOtherAuther();
-	      }).finally(function(){
-	        // author was either found, or not
-	      });
-	      ```
-
-	      @method finally
-	      @param {Function} callback
-	      @param {String} label optional string for labeling the promise.
-	      Useful for tooling.
-	      @return {Promise}
-	    */
-	      'finally': function(callback, label) {
-	        var promise = this;
-	        var constructor = promise.constructor;
-
-	        return promise.then(function(value) {
-	          return constructor.resolve(callback()).then(function(){
-	            return value;
-	          });
-	        }, function(reason) {
-	          return constructor.resolve(callback()).then(function(){
-	            throw reason;
-	          });
-	        }, label);
-	      }
-	    };
-
-	    function lib$rsvp$all$settled$$AllSettled(Constructor, entries, label) {
-	      this._superConstructor(Constructor, entries, false /* don't abort on reject */, label);
-	    }
-
-	    lib$rsvp$all$settled$$AllSettled.prototype = lib$rsvp$utils$$o_create(lib$rsvp$enumerator$$default.prototype);
-	    lib$rsvp$all$settled$$AllSettled.prototype._superConstructor = lib$rsvp$enumerator$$default;
-	    lib$rsvp$all$settled$$AllSettled.prototype._makeResult = lib$rsvp$enumerator$$makeSettledResult;
-	    lib$rsvp$all$settled$$AllSettled.prototype._validationError = function() {
-	      return new Error('allSettled must be called with an array');
-	    };
-
-	    function lib$rsvp$all$settled$$allSettled(entries, label) {
-	      return new lib$rsvp$all$settled$$AllSettled(lib$rsvp$promise$$default, entries, label).promise;
-	    }
-	    var lib$rsvp$all$settled$$default = lib$rsvp$all$settled$$allSettled;
-	    function lib$rsvp$all$$all(array, label) {
-	      return lib$rsvp$promise$$default.all(array, label);
-	    }
-	    var lib$rsvp$all$$default = lib$rsvp$all$$all;
-	    var lib$rsvp$asap$$len = 0;
-	    var lib$rsvp$asap$$toString = {}.toString;
-	    var lib$rsvp$asap$$vertxNext;
-	    function lib$rsvp$asap$$asap(callback, arg) {
-	      lib$rsvp$asap$$queue[lib$rsvp$asap$$len] = callback;
-	      lib$rsvp$asap$$queue[lib$rsvp$asap$$len + 1] = arg;
-	      lib$rsvp$asap$$len += 2;
-	      if (lib$rsvp$asap$$len === 2) {
-	        // If len is 1, that means that we need to schedule an async flush.
-	        // If additional callbacks are queued before the queue is flushed, they
-	        // will be processed by this flush that we are scheduling.
-	        lib$rsvp$asap$$scheduleFlush();
-	      }
-	    }
-
-	    var lib$rsvp$asap$$default = lib$rsvp$asap$$asap;
-
-	    var lib$rsvp$asap$$browserWindow = (typeof window !== 'undefined') ? window : undefined;
-	    var lib$rsvp$asap$$browserGlobal = lib$rsvp$asap$$browserWindow || {};
-	    var lib$rsvp$asap$$BrowserMutationObserver = lib$rsvp$asap$$browserGlobal.MutationObserver || lib$rsvp$asap$$browserGlobal.WebKitMutationObserver;
-	    var lib$rsvp$asap$$isNode = typeof self === 'undefined' &&
-	      typeof process !== 'undefined' && {}.toString.call(process) === '[object process]';
-
-	    // test for web worker but not in IE10
-	    var lib$rsvp$asap$$isWorker = typeof Uint8ClampedArray !== 'undefined' &&
-	      typeof importScripts !== 'undefined' &&
-	      typeof MessageChannel !== 'undefined';
-
-	    // node
-	    function lib$rsvp$asap$$useNextTick() {
-	      var nextTick = process.nextTick;
-	      // node version 0.10.x displays a deprecation warning when nextTick is used recursively
-	      // setImmediate should be used instead instead
-	      var version = process.versions.node.match(/^(?:(\d+)\.)?(?:(\d+)\.)?(\*|\d+)$/);
-	      if (Array.isArray(version) && version[1] === '0' && version[2] === '10') {
-	        nextTick = setImmediate;
-	      }
-	      return function() {
-	        nextTick(lib$rsvp$asap$$flush);
-	      };
-	    }
-
-	    // vertx
-	    function lib$rsvp$asap$$useVertxTimer() {
-	      return function() {
-	        lib$rsvp$asap$$vertxNext(lib$rsvp$asap$$flush);
-	      };
-	    }
-
-	    function lib$rsvp$asap$$useMutationObserver() {
-	      var iterations = 0;
-	      var observer = new lib$rsvp$asap$$BrowserMutationObserver(lib$rsvp$asap$$flush);
-	      var node = document.createTextNode('');
-	      observer.observe(node, { characterData: true });
-
-	      return function() {
-	        node.data = (iterations = ++iterations % 2);
-	      };
-	    }
-
-	    // web worker
-	    function lib$rsvp$asap$$useMessageChannel() {
-	      var channel = new MessageChannel();
-	      channel.port1.onmessage = lib$rsvp$asap$$flush;
-	      return function () {
-	        channel.port2.postMessage(0);
-	      };
-	    }
-
-	    function lib$rsvp$asap$$useSetTimeout() {
-	      return function() {
-	        setTimeout(lib$rsvp$asap$$flush, 1);
-	      };
-	    }
-
-	    var lib$rsvp$asap$$queue = new Array(1000);
-	    function lib$rsvp$asap$$flush() {
-	      for (var i = 0; i < lib$rsvp$asap$$len; i+=2) {
-	        var callback = lib$rsvp$asap$$queue[i];
-	        var arg = lib$rsvp$asap$$queue[i+1];
-
-	        callback(arg);
-
-	        lib$rsvp$asap$$queue[i] = undefined;
-	        lib$rsvp$asap$$queue[i+1] = undefined;
-	      }
-
-	      lib$rsvp$asap$$len = 0;
-	    }
-
-	    function lib$rsvp$asap$$attemptVertex() {
-	      try {
-	        var r = require;
-	        var vertx = __webpack_require__(9);
-	        lib$rsvp$asap$$vertxNext = vertx.runOnLoop || vertx.runOnContext;
-	        return lib$rsvp$asap$$useVertxTimer();
-	      } catch(e) {
-	        return lib$rsvp$asap$$useSetTimeout();
-	      }
-	    }
-
-	    var lib$rsvp$asap$$scheduleFlush;
-	    // Decide what async method to use to triggering processing of queued callbacks:
-	    if (lib$rsvp$asap$$isNode) {
-	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useNextTick();
-	    } else if (lib$rsvp$asap$$BrowserMutationObserver) {
-	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useMutationObserver();
-	    } else if (lib$rsvp$asap$$isWorker) {
-	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useMessageChannel();
-	    } else if (lib$rsvp$asap$$browserWindow === undefined && "function" === 'function') {
-	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$attemptVertex();
+	  } else {
+	    config.async(publish, promise);
+	  }
+	}
+
+	function reject(promise, reason) {
+	  if (promise._state !== PENDING) {
+	    return;
+	  }
+	  promise._state = REJECTED;
+	  promise._result = reason;
+	  config.async(publishRejection, promise);
+	}
+
+	function subscribe(parent, child, onFulfillment, onRejection) {
+	  var subscribers = parent._subscribers;
+	  var length = subscribers.length;
+
+	  parent._onError = null;
+
+	  subscribers[length] = child;
+	  subscribers[length + FULFILLED] = onFulfillment;
+	  subscribers[length + REJECTED] = onRejection;
+
+	  if (length === 0 && parent._state) {
+	    config.async(publish, parent);
+	  }
+	}
+
+	function publish(promise) {
+	  var subscribers = promise._subscribers;
+	  var settled = promise._state;
+
+	  if (config.instrument) {
+	    instrument(settled === FULFILLED ? 'fulfilled' : 'rejected', promise);
+	  }
+
+	  if (subscribers.length === 0) {
+	    return;
+	  }
+
+	  var child = void 0,
+	      callback = void 0,
+	      result = promise._result;
+
+	  for (var i = 0; i < subscribers.length; i += 3) {
+	    child = subscribers[i];
+	    callback = subscribers[i + settled];
+
+	    if (child) {
+	      invokeCallback(settled, child, callback, result);
 	    } else {
-	      lib$rsvp$asap$$scheduleFlush = lib$rsvp$asap$$useSetTimeout();
+	      callback(result);
 	    }
-	    function lib$rsvp$defer$$defer(label) {
-	      var deferred = {};
+	  }
 
-	      deferred['promise'] = new lib$rsvp$promise$$default(function(resolve, reject) {
-	        deferred['resolve'] = resolve;
-	        deferred['reject'] = reject;
-	      }, label);
+	  promise._subscribers.length = 0;
+	}
 
-	      return deferred;
+	function ErrorObject() {
+	  this.error = null;
+	}
+
+	var TRY_CATCH_ERROR = new ErrorObject();
+
+	function tryCatch(callback, result) {
+	  try {
+	    return callback(result);
+	  } catch (e) {
+	    TRY_CATCH_ERROR.error = e;
+	    return TRY_CATCH_ERROR;
+	  }
+	}
+
+	function invokeCallback(state, promise, callback, result) {
+	  var hasCallback = isFunction(callback);
+	  var value = void 0,
+	      error = void 0;
+
+	  if (hasCallback) {
+	    value = tryCatch(callback, result);
+
+	    if (value === TRY_CATCH_ERROR) {
+	      error = value.error;
+	      value.error = null; // release
+	    } else if (value === promise) {
+	      reject(promise, withOwnPromise());
+	      return;
 	    }
-	    var lib$rsvp$defer$$default = lib$rsvp$defer$$defer;
-	    function lib$rsvp$filter$$filter(promises, filterFn, label) {
-	      return lib$rsvp$promise$$default.all(promises, label).then(function(values) {
-	        if (!lib$rsvp$utils$$isFunction(filterFn)) {
-	          throw new TypeError("You must pass a function as filter's second argument.");
-	        }
+	  } else {
+	    value = result;
+	  }
 
-	        var length = values.length;
-	        var filtered = new Array(length);
+	  if (promise._state !== PENDING) {
+	    // noop
+	  } else if (hasCallback && error === undefined) {
+	    resolve(promise, value);
+	  } else if (error !== undefined) {
+	    reject(promise, error);
+	  } else if (state === FULFILLED) {
+	    fulfill(promise, value);
+	  } else if (state === REJECTED) {
+	    reject(promise, value);
+	  }
+	}
 
-	        for (var i = 0; i < length; i++) {
-	          filtered[i] = filterFn(values[i]);
-	        }
-
-	        return lib$rsvp$promise$$default.all(filtered, label).then(function(filtered) {
-	          var results = new Array(length);
-	          var newLength = 0;
-
-	          for (var i = 0; i < length; i++) {
-	            if (filtered[i]) {
-	              results[newLength] = values[i];
-	              newLength++;
-	            }
-	          }
-
-	          results.length = newLength;
-
-	          return results;
-	        });
-	      });
-	    }
-	    var lib$rsvp$filter$$default = lib$rsvp$filter$$filter;
-
-	    function lib$rsvp$promise$hash$$PromiseHash(Constructor, object, label) {
-	      this._superConstructor(Constructor, object, true, label);
-	    }
-
-	    var lib$rsvp$promise$hash$$default = lib$rsvp$promise$hash$$PromiseHash;
-
-	    lib$rsvp$promise$hash$$PromiseHash.prototype = lib$rsvp$utils$$o_create(lib$rsvp$enumerator$$default.prototype);
-	    lib$rsvp$promise$hash$$PromiseHash.prototype._superConstructor = lib$rsvp$enumerator$$default;
-	    lib$rsvp$promise$hash$$PromiseHash.prototype._init = function() {
-	      this._result = {};
-	    };
-
-	    lib$rsvp$promise$hash$$PromiseHash.prototype._validateInput = function(input) {
-	      return input && typeof input === 'object';
-	    };
-
-	    lib$rsvp$promise$hash$$PromiseHash.prototype._validationError = function() {
-	      return new Error('Promise.hash must be called with an object');
-	    };
-
-	    lib$rsvp$promise$hash$$PromiseHash.prototype._enumerate = function() {
-	      var enumerator = this;
-	      var promise    = enumerator.promise;
-	      var input      = enumerator._input;
-	      var results    = [];
-
-	      for (var key in input) {
-	        if (promise._state === lib$rsvp$$internal$$PENDING && Object.prototype.hasOwnProperty.call(input, key)) {
-	          results.push({
-	            position: key,
-	            entry: input[key]
-	          });
-	        }
+	function initializePromise(promise, resolver) {
+	  var resolved = false;
+	  try {
+	    resolver(function (value) {
+	      if (resolved) {
+	        return;
 	      }
-
-	      var length = results.length;
-	      enumerator._remaining = length;
-	      var result;
-
-	      for (var i = 0; promise._state === lib$rsvp$$internal$$PENDING && i < length; i++) {
-	        result = results[i];
-	        enumerator._eachEntry(result.entry, result.position);
+	      resolved = true;
+	      resolve(promise, value);
+	    }, function (reason) {
+	      if (resolved) {
+	        return;
 	      }
-	    };
+	      resolved = true;
+	      reject(promise, reason);
+	    });
+	  } catch (e) {
+	    reject(promise, e);
+	  }
+	}
 
-	    function lib$rsvp$hash$settled$$HashSettled(Constructor, object, label) {
-	      this._superConstructor(Constructor, object, false, label);
+	function then(onFulfillment, onRejection, label) {
+	  var parent = this;
+	  var state = parent._state;
+
+	  if (state === FULFILLED && !onFulfillment || state === REJECTED && !onRejection) {
+	    config.instrument && instrument('chained', parent, parent);
+	    return parent;
+	  }
+
+	  parent._onError = null;
+
+	  var child = new parent.constructor(noop, label);
+	  var result = parent._result;
+
+	  config.instrument && instrument('chained', parent, child);
+
+	  if (state === PENDING) {
+	    subscribe(parent, child, onFulfillment, onRejection);
+	  } else {
+	    var callback = state === FULFILLED ? onFulfillment : onRejection;
+	    config.async(function () {
+	      return invokeCallback(state, child, callback, result);
+	    });
+	  }
+
+	  return child;
+	}
+
+	var Enumerator = function () {
+	  function Enumerator(Constructor, input, abortOnReject, label) {
+	    this._instanceConstructor = Constructor;
+	    this.promise = new Constructor(noop, label);
+	    this._abortOnReject = abortOnReject;
+
+	    this._init.apply(this, arguments);
+	  }
+
+	  Enumerator.prototype._init = function _init(Constructor, input) {
+	    var len = input.length || 0;
+	    this.length = len;
+	    this._remaining = len;
+	    this._result = new Array(len);
+
+	    this._enumerate(input);
+	    if (this._remaining === 0) {
+	      fulfill(this.promise, this._result);
 	    }
+	  };
 
-	    lib$rsvp$hash$settled$$HashSettled.prototype = lib$rsvp$utils$$o_create(lib$rsvp$promise$hash$$default.prototype);
-	    lib$rsvp$hash$settled$$HashSettled.prototype._superConstructor = lib$rsvp$enumerator$$default;
-	    lib$rsvp$hash$settled$$HashSettled.prototype._makeResult = lib$rsvp$enumerator$$makeSettledResult;
+	  Enumerator.prototype._enumerate = function _enumerate(input) {
+	    var length = this.length;
+	    var promise = this.promise;
 
-	    lib$rsvp$hash$settled$$HashSettled.prototype._validationError = function() {
-	      return new Error('hashSettled must be called with an object');
-	    };
-
-	    function lib$rsvp$hash$settled$$hashSettled(object, label) {
-	      return new lib$rsvp$hash$settled$$HashSettled(lib$rsvp$promise$$default, object, label).promise;
+	    for (var i = 0; promise._state === PENDING && i < length; i++) {
+	      this._eachEntry(input[i], i);
 	    }
-	    var lib$rsvp$hash$settled$$default = lib$rsvp$hash$settled$$hashSettled;
-	    function lib$rsvp$hash$$hash(object, label) {
-	      return new lib$rsvp$promise$hash$$default(lib$rsvp$promise$$default, object, label).promise;
-	    }
-	    var lib$rsvp$hash$$default = lib$rsvp$hash$$hash;
-	    function lib$rsvp$map$$map(promises, mapFn, label) {
-	      return lib$rsvp$promise$$default.all(promises, label).then(function(values) {
-	        if (!lib$rsvp$utils$$isFunction(mapFn)) {
-	          throw new TypeError("You must pass a function as map's second argument.");
-	        }
+	  };
 
-	        var length = values.length;
-	        var results = new Array(length);
+	  Enumerator.prototype._settleMaybeThenable = function _settleMaybeThenable(entry, i) {
+	    var c = this._instanceConstructor;
+	    var resolve$$1 = c.resolve;
 
-	        for (var i = 0; i < length; i++) {
-	          results[i] = mapFn(values[i]);
-	        }
+	    if (resolve$$1 === resolve$1) {
+	      var then$$1 = getThen(entry);
 
-	        return lib$rsvp$promise$$default.all(results, label);
-	      });
-	    }
-	    var lib$rsvp$map$$default = lib$rsvp$map$$map;
-
-	    function lib$rsvp$node$$Result() {
-	      this.value = undefined;
-	    }
-
-	    var lib$rsvp$node$$ERROR = new lib$rsvp$node$$Result();
-	    var lib$rsvp$node$$GET_THEN_ERROR = new lib$rsvp$node$$Result();
-
-	    function lib$rsvp$node$$getThen(obj) {
-	      try {
-	       return obj.then;
-	      } catch(error) {
-	        lib$rsvp$node$$ERROR.value= error;
-	        return lib$rsvp$node$$ERROR;
-	      }
-	    }
-
-
-	    function lib$rsvp$node$$tryApply(f, s, a) {
-	      try {
-	        f.apply(s, a);
-	      } catch(error) {
-	        lib$rsvp$node$$ERROR.value = error;
-	        return lib$rsvp$node$$ERROR;
-	      }
-	    }
-
-	    function lib$rsvp$node$$makeObject(_, argumentNames) {
-	      var obj = {};
-	      var name;
-	      var i;
-	      var length = _.length;
-	      var args = new Array(length);
-
-	      for (var x = 0; x < length; x++) {
-	        args[x] = _[x];
-	      }
-
-	      for (i = 0; i < argumentNames.length; i++) {
-	        name = argumentNames[i];
-	        obj[name] = args[i + 1];
-	      }
-
-	      return obj;
-	    }
-
-	    function lib$rsvp$node$$arrayResult(_) {
-	      var length = _.length;
-	      var args = new Array(length - 1);
-
-	      for (var i = 1; i < length; i++) {
-	        args[i - 1] = _[i];
-	      }
-
-	      return args;
-	    }
-
-	    function lib$rsvp$node$$wrapThenable(then, promise) {
-	      return {
-	        then: function(onFulFillment, onRejection) {
-	          return then.call(promise, onFulFillment, onRejection);
-	        }
-	      };
-	    }
-
-	    function lib$rsvp$node$$denodeify(nodeFunc, options) {
-	      var fn = function() {
-	        var self = this;
-	        var l = arguments.length;
-	        var args = new Array(l + 1);
-	        var arg;
-	        var promiseInput = false;
-
-	        for (var i = 0; i < l; ++i) {
-	          arg = arguments[i];
-
-	          if (!promiseInput) {
-	            // TODO: clean this up
-	            promiseInput = lib$rsvp$node$$needsPromiseInput(arg);
-	            if (promiseInput === lib$rsvp$node$$GET_THEN_ERROR) {
-	              var p = new lib$rsvp$promise$$default(lib$rsvp$$internal$$noop);
-	              lib$rsvp$$internal$$reject(p, lib$rsvp$node$$GET_THEN_ERROR.value);
-	              return p;
-	            } else if (promiseInput && promiseInput !== true) {
-	              arg = lib$rsvp$node$$wrapThenable(promiseInput, arg);
-	            }
-	          }
-	          args[i] = arg;
-	        }
-
-	        var promise = new lib$rsvp$promise$$default(lib$rsvp$$internal$$noop);
-
-	        args[l] = function(err, val) {
-	          if (err)
-	            lib$rsvp$$internal$$reject(promise, err);
-	          else if (options === undefined)
-	            lib$rsvp$$internal$$resolve(promise, val);
-	          else if (options === true)
-	            lib$rsvp$$internal$$resolve(promise, lib$rsvp$node$$arrayResult(arguments));
-	          else if (lib$rsvp$utils$$isArray(options))
-	            lib$rsvp$$internal$$resolve(promise, lib$rsvp$node$$makeObject(arguments, options));
-	          else
-	            lib$rsvp$$internal$$resolve(promise, val);
-	        };
-
-	        if (promiseInput) {
-	          return lib$rsvp$node$$handlePromiseInput(promise, args, nodeFunc, self);
-	        } else {
-	          return lib$rsvp$node$$handleValueInput(promise, args, nodeFunc, self);
-	        }
-	      };
-
-	      fn.__proto__ = nodeFunc;
-
-	      return fn;
-	    }
-
-	    var lib$rsvp$node$$default = lib$rsvp$node$$denodeify;
-
-	    function lib$rsvp$node$$handleValueInput(promise, args, nodeFunc, self) {
-	      var result = lib$rsvp$node$$tryApply(nodeFunc, self, args);
-	      if (result === lib$rsvp$node$$ERROR) {
-	        lib$rsvp$$internal$$reject(promise, result.value);
-	      }
-	      return promise;
-	    }
-
-	    function lib$rsvp$node$$handlePromiseInput(promise, args, nodeFunc, self){
-	      return lib$rsvp$promise$$default.all(args).then(function(args){
-	        var result = lib$rsvp$node$$tryApply(nodeFunc, self, args);
-	        if (result === lib$rsvp$node$$ERROR) {
-	          lib$rsvp$$internal$$reject(promise, result.value);
-	        }
-	        return promise;
-	      });
-	    }
-
-	    function lib$rsvp$node$$needsPromiseInput(arg) {
-	      if (arg && typeof arg === 'object') {
-	        if (arg.constructor === lib$rsvp$promise$$default) {
-	          return true;
-	        } else {
-	          return lib$rsvp$node$$getThen(arg);
-	        }
+	      if (then$$1 === then && entry._state !== PENDING) {
+	        entry._onError = null;
+	        this._settledAt(entry._state, i, entry._result);
+	      } else if (typeof then$$1 !== 'function') {
+	        this._remaining--;
+	        this._result[i] = this._makeResult(FULFILLED, i, entry);
+	      } else if (c === Promise) {
+	        var promise = new c(noop);
+	        handleMaybeThenable(promise, entry, then$$1);
+	        this._willSettleAt(promise, i);
 	      } else {
-	        return false;
+	        this._willSettleAt(new c(function (resolve$$1) {
+	          return resolve$$1(entry);
+	        }), i);
+	      }
+	    } else {
+	      this._willSettleAt(resolve$$1(entry), i);
+	    }
+	  };
+
+	  Enumerator.prototype._eachEntry = function _eachEntry(entry, i) {
+	    if (isMaybeThenable(entry)) {
+	      this._settleMaybeThenable(entry, i);
+	    } else {
+	      this._remaining--;
+	      this._result[i] = this._makeResult(FULFILLED, i, entry);
+	    }
+	  };
+
+	  Enumerator.prototype._settledAt = function _settledAt(state, i, value) {
+	    var promise = this.promise;
+
+	    if (promise._state === PENDING) {
+	      if (this._abortOnReject && state === REJECTED) {
+	        reject(promise, value);
+	      } else {
+	        this._remaining--;
+	        this._result[i] = this._makeResult(state, i, value);
+	        if (this._remaining === 0) {
+	          fulfill(promise, this._result);
+	        }
 	      }
 	    }
-	    var lib$rsvp$platform$$platform;
+	  };
 
-	    /* global self */
-	    if (typeof self === 'object') {
-	      lib$rsvp$platform$$platform = self;
+	  Enumerator.prototype._makeResult = function _makeResult(state, i, value) {
+	    return value;
+	  };
 
-	    /* global global */
-	    } else if (typeof global === 'object') {
-	      lib$rsvp$platform$$platform = global;
-	    } else {
-	      throw new Error('no global: `self` or `global` found');
-	    }
+	  Enumerator.prototype._willSettleAt = function _willSettleAt(promise, i) {
+	    var enumerator = this;
 
-	    var lib$rsvp$platform$$default = lib$rsvp$platform$$platform;
-	    function lib$rsvp$race$$race(array, label) {
-	      return lib$rsvp$promise$$default.race(array, label);
+	    subscribe(promise, undefined, function (value) {
+	      return enumerator._settledAt(FULFILLED, i, value);
+	    }, function (reason) {
+	      return enumerator._settledAt(REJECTED, i, reason);
+	    });
+	  };
+
+	  return Enumerator;
+	}();
+
+	function makeSettledResult(state, position, value) {
+	  if (state === FULFILLED) {
+	    return {
+	      state: 'fulfilled',
+	      value: value
+	    };
+	  } else {
+	    return {
+	      state: 'rejected',
+	      reason: value
+	    };
+	  }
+	}
+
+	/**
+	  `RSVP.Promise.all` accepts an array of promises, and returns a new promise which
+	  is fulfilled with an array of fulfillment values for the passed promises, or
+	  rejected with the reason of the first passed promise to be rejected. It casts all
+	  elements of the passed iterable to promises as it runs this algorithm.
+
+	  Example:
+
+	  ```javascript
+	  let promise1 = RSVP.resolve(1);
+	  let promise2 = RSVP.resolve(2);
+	  let promise3 = RSVP.resolve(3);
+	  let promises = [ promise1, promise2, promise3 ];
+
+	  RSVP.Promise.all(promises).then(function(array){
+	    // The array here would be [ 1, 2, 3 ];
+	  });
+	  ```
+
+	  If any of the `promises` given to `RSVP.all` are rejected, the first promise
+	  that is rejected will be given as an argument to the returned promises's
+	  rejection handler. For example:
+
+	  Example:
+
+	  ```javascript
+	  let promise1 = RSVP.resolve(1);
+	  let promise2 = RSVP.reject(new Error("2"));
+	  let promise3 = RSVP.reject(new Error("3"));
+	  let promises = [ promise1, promise2, promise3 ];
+
+	  RSVP.Promise.all(promises).then(function(array){
+	    // Code here never runs because there are rejected promises!
+	  }, function(error) {
+	    // error.message === "2"
+	  });
+	  ```
+
+	  @method all
+	  @static
+	  @param {Array} entries array of promises
+	  @param {String} label optional string for labeling the promise.
+	  Useful for tooling.
+	  @return {Promise} promise that is fulfilled when all `promises` have been
+	  fulfilled, or rejected if any of them become rejected.
+	  @static
+	*/
+	function all(entries, label) {
+	  if (!isArray(entries)) {
+	    return this.reject(new TypeError("Promise.all must be called with an array"), label);
+	  }
+	  return new Enumerator(this, entries, true /* abort on reject */, label).promise;
+	}
+
+	/**
+	  `RSVP.Promise.race` returns a new promise which is settled in the same way as the
+	  first passed promise to settle.
+
+	  Example:
+
+	  ```javascript
+	  let promise1 = new RSVP.Promise(function(resolve, reject){
+	    setTimeout(function(){
+	      resolve('promise 1');
+	    }, 200);
+	  });
+
+	  let promise2 = new RSVP.Promise(function(resolve, reject){
+	    setTimeout(function(){
+	      resolve('promise 2');
+	    }, 100);
+	  });
+
+	  RSVP.Promise.race([promise1, promise2]).then(function(result){
+	    // result === 'promise 2' because it was resolved before promise1
+	    // was resolved.
+	  });
+	  ```
+
+	  `RSVP.Promise.race` is deterministic in that only the state of the first
+	  settled promise matters. For example, even if other promises given to the
+	  `promises` array argument are resolved, but the first settled promise has
+	  become rejected before the other promises became fulfilled, the returned
+	  promise will become rejected:
+
+	  ```javascript
+	  let promise1 = new RSVP.Promise(function(resolve, reject){
+	    setTimeout(function(){
+	      resolve('promise 1');
+	    }, 200);
+	  });
+
+	  let promise2 = new RSVP.Promise(function(resolve, reject){
+	    setTimeout(function(){
+	      reject(new Error('promise 2'));
+	    }, 100);
+	  });
+
+	  RSVP.Promise.race([promise1, promise2]).then(function(result){
+	    // Code here never runs
+	  }, function(reason){
+	    // reason.message === 'promise 2' because promise 2 became rejected before
+	    // promise 1 became fulfilled
+	  });
+	  ```
+
+	  An example real-world use case is implementing timeouts:
+
+	  ```javascript
+	  RSVP.Promise.race([ajax('foo.json'), timeout(5000)])
+	  ```
+
+	  @method race
+	  @static
+	  @param {Array} entries array of promises to observe
+	  @param {String} label optional string for describing the promise returned.
+	  Useful for tooling.
+	  @return {Promise} a promise which settles in the same way as the first passed
+	  promise to settle.
+	*/
+	function race(entries, label) {
+	  /*jshint validthis:true */
+	  var Constructor = this;
+
+	  var promise = new Constructor(noop, label);
+
+	  if (!isArray(entries)) {
+	    reject(promise, new TypeError('Promise.race must be called with an array'));
+	    return promise;
+	  }
+
+	  for (var i = 0; promise._state === PENDING && i < entries.length; i++) {
+	    subscribe(Constructor.resolve(entries[i]), undefined, function (value) {
+	      return resolve(promise, value);
+	    }, function (reason) {
+	      return reject(promise, reason);
+	    });
+	  }
+
+	  return promise;
+	}
+
+	/**
+	  `RSVP.Promise.reject` returns a promise rejected with the passed `reason`.
+	  It is shorthand for the following:
+
+	  ```javascript
+	  let promise = new RSVP.Promise(function(resolve, reject){
+	    reject(new Error('WHOOPS'));
+	  });
+
+	  promise.then(function(value){
+	    // Code here doesn't run because the promise is rejected!
+	  }, function(reason){
+	    // reason.message === 'WHOOPS'
+	  });
+	  ```
+
+	  Instead of writing the above, your code now simply becomes the following:
+
+	  ```javascript
+	  let promise = RSVP.Promise.reject(new Error('WHOOPS'));
+
+	  promise.then(function(value){
+	    // Code here doesn't run because the promise is rejected!
+	  }, function(reason){
+	    // reason.message === 'WHOOPS'
+	  });
+	  ```
+
+	  @method reject
+	  @static
+	  @param {*} reason value that the returned promise will be rejected with.
+	  @param {String} label optional string for identifying the returned promise.
+	  Useful for tooling.
+	  @return {Promise} a promise rejected with the given `reason`.
+	*/
+	function reject$1(reason, label) {
+	  /*jshint validthis:true */
+	  var Constructor = this;
+	  var promise = new Constructor(noop, label);
+	  reject(promise, reason);
+	  return promise;
+	}
+
+	var guidKey = 'rsvp_' + now() + '-';
+	var counter = 0;
+
+	function needsResolver() {
+	  throw new TypeError('You must pass a resolver function as the first argument to the promise constructor');
+	}
+
+	function needsNew() {
+	  throw new TypeError("Failed to construct 'Promise': Please use the 'new' operator, this object constructor cannot be called as a function.");
+	}
+
+	/**
+	  Promise objects represent the eventual result of an asynchronous operation. The
+	  primary way of interacting with a promise is through its `then` method, which
+	  registers callbacks to receive either a promise’s eventual value or the reason
+	  why the promise cannot be fulfilled.
+
+	  Terminology
+	  -----------
+
+	  - `promise` is an object or function with a `then` method whose behavior conforms to this specification.
+	  - `thenable` is an object or function that defines a `then` method.
+	  - `value` is any legal JavaScript value (including undefined, a thenable, or a promise).
+	  - `exception` is a value that is thrown using the throw statement.
+	  - `reason` is a value that indicates why a promise was rejected.
+	  - `settled` the final resting state of a promise, fulfilled or rejected.
+
+	  A promise can be in one of three states: pending, fulfilled, or rejected.
+
+	  Promises that are fulfilled have a fulfillment value and are in the fulfilled
+	  state.  Promises that are rejected have a rejection reason and are in the
+	  rejected state.  A fulfillment value is never a thenable.
+
+	  Promises can also be said to *resolve* a value.  If this value is also a
+	  promise, then the original promise's settled state will match the value's
+	  settled state.  So a promise that *resolves* a promise that rejects will
+	  itself reject, and a promise that *resolves* a promise that fulfills will
+	  itself fulfill.
+
+
+	  Basic Usage:
+	  ------------
+
+	  ```js
+	  let promise = new Promise(function(resolve, reject) {
+	    // on success
+	    resolve(value);
+
+	    // on failure
+	    reject(reason);
+	  });
+
+	  promise.then(function(value) {
+	    // on fulfillment
+	  }, function(reason) {
+	    // on rejection
+	  });
+	  ```
+
+	  Advanced Usage:
+	  ---------------
+
+	  Promises shine when abstracting away asynchronous interactions such as
+	  `XMLHttpRequest`s.
+
+	  ```js
+	  function getJSON(url) {
+	    return new Promise(function(resolve, reject){
+	      let xhr = new XMLHttpRequest();
+
+	      xhr.open('GET', url);
+	      xhr.onreadystatechange = handler;
+	      xhr.responseType = 'json';
+	      xhr.setRequestHeader('Accept', 'application/json');
+	      xhr.send();
+
+	      function handler() {
+	        if (this.readyState === this.DONE) {
+	          if (this.status === 200) {
+	            resolve(this.response);
+	          } else {
+	            reject(new Error('getJSON: `' + url + '` failed with status: [' + this.status + ']'));
+	          }
+	        }
+	      };
+	    });
+	  }
+
+	  getJSON('/posts.json').then(function(json) {
+	    // on fulfillment
+	  }, function(reason) {
+	    // on rejection
+	  });
+	  ```
+
+	  Unlike callbacks, promises are great composable primitives.
+
+	  ```js
+	  Promise.all([
+	    getJSON('/posts'),
+	    getJSON('/comments')
+	  ]).then(function(values){
+	    values[0] // => postsJSON
+	    values[1] // => commentsJSON
+
+	    return values;
+	  });
+	  ```
+
+	  @class RSVP.Promise
+	  @param {function} resolver
+	  @param {String} label optional string for labeling the promise.
+	  Useful for tooling.
+	  @constructor
+	*/
+
+	var Promise = function () {
+	  function Promise(resolver, label) {
+	    this._id = counter++;
+	    this._label = label;
+	    this._state = undefined;
+	    this._result = undefined;
+	    this._subscribers = [];
+
+	    config.instrument && instrument('created', this);
+
+	    if (noop !== resolver) {
+	      typeof resolver !== 'function' && needsResolver();
+	      this instanceof Promise ? initializePromise(this, resolver) : needsNew();
 	    }
-	    var lib$rsvp$race$$default = lib$rsvp$race$$race;
-	    function lib$rsvp$reject$$reject(reason, label) {
-	      return lib$rsvp$promise$$default.reject(reason, label);
+	  }
+
+	  Promise.prototype._onError = function _onError(reason) {
+	    var _this = this;
+
+	    config.after(function () {
+	      if (_this._onError) {
+	        config.trigger('error', reason, _this._label);
+	      }
+	    });
+	  };
+
+	  /**
+	    `catch` is simply sugar for `then(undefined, onRejection)` which makes it the same
+	    as the catch block of a try/catch statement.
+	  
+	    ```js
+	    function findAuthor(){
+	      throw new Error('couldn\'t find that author');
 	    }
-	    var lib$rsvp$reject$$default = lib$rsvp$reject$$reject;
-	    function lib$rsvp$resolve$$resolve(value, label) {
-	      return lib$rsvp$promise$$default.resolve(value, label);
+	  
+	    // synchronous
+	    try {
+	      findAuthor();
+	    } catch(reason) {
+	      // something went wrong
 	    }
-	    var lib$rsvp$resolve$$default = lib$rsvp$resolve$$resolve;
-	    function lib$rsvp$rethrow$$rethrow(reason) {
-	      setTimeout(function() {
+	  
+	    // async with promises
+	    findAuthor().catch(function(reason){
+	      // something went wrong
+	    });
+	    ```
+	  
+	    @method catch
+	    @param {Function} onRejection
+	    @param {String} label optional string for labeling the promise.
+	    Useful for tooling.
+	    @return {Promise}
+	  */
+
+
+	  Promise.prototype.catch = function _catch(onRejection, label) {
+	    return this.then(undefined, onRejection, label);
+	  };
+
+	  /**
+	    `finally` will be invoked regardless of the promise's fate just as native
+	    try/catch/finally behaves
+	  
+	    Synchronous example:
+	  
+	    ```js
+	    findAuthor() {
+	      if (Math.random() > 0.5) {
+	        throw new Error();
+	      }
+	      return new Author();
+	    }
+	  
+	    try {
+	      return findAuthor(); // succeed or fail
+	    } catch(error) {
+	      return findOtherAuthor();
+	    } finally {
+	      // always runs
+	      // doesn't affect the return value
+	    }
+	    ```
+	  
+	    Asynchronous example:
+	  
+	    ```js
+	    findAuthor().catch(function(reason){
+	      return findOtherAuthor();
+	    }).finally(function(){
+	      // author was either found, or not
+	    });
+	    ```
+	  
+	    @method finally
+	    @param {Function} callback
+	    @param {String} label optional string for labeling the promise.
+	    Useful for tooling.
+	    @return {Promise}
+	  */
+
+
+	  Promise.prototype.finally = function _finally(callback, label) {
+	    var promise = this;
+	    var constructor = promise.constructor;
+
+	    return promise.then(function (value) {
+	      return constructor.resolve(callback()).then(function () {
+	        return value;
+	      });
+	    }, function (reason) {
+	      return constructor.resolve(callback()).then(function () {
 	        throw reason;
 	      });
-	      throw reason;
-	    }
-	    var lib$rsvp$rethrow$$default = lib$rsvp$rethrow$$rethrow;
+	    }, label);
+	  };
 
-	    // defaults
-	    lib$rsvp$config$$config.async = lib$rsvp$asap$$default;
-	    lib$rsvp$config$$config.after = function(cb) {
-	      setTimeout(cb, 0);
-	    };
-	    var lib$rsvp$$cast = lib$rsvp$resolve$$default;
-	    function lib$rsvp$$async(callback, arg) {
-	      lib$rsvp$config$$config.async(callback, arg);
-	    }
+	  return Promise;
+	}();
 
-	    function lib$rsvp$$on() {
-	      lib$rsvp$config$$config['on'].apply(lib$rsvp$config$$config, arguments);
-	    }
 
-	    function lib$rsvp$$off() {
-	      lib$rsvp$config$$config['off'].apply(lib$rsvp$config$$config, arguments);
-	    }
 
-	    // Set up instrumentation through `window.__PROMISE_INTRUMENTATION__`
-	    if (typeof window !== 'undefined' && typeof window['__PROMISE_INSTRUMENTATION__'] === 'object') {
-	      var lib$rsvp$$callbacks = window['__PROMISE_INSTRUMENTATION__'];
-	      lib$rsvp$config$$configure('instrument', true);
-	      for (var lib$rsvp$$eventName in lib$rsvp$$callbacks) {
-	        if (lib$rsvp$$callbacks.hasOwnProperty(lib$rsvp$$eventName)) {
-	          lib$rsvp$$on(lib$rsvp$$eventName, lib$rsvp$$callbacks[lib$rsvp$$eventName]);
+	Promise.cast = resolve$1; // deprecated
+	Promise.all = all;
+	Promise.race = race;
+	Promise.resolve = resolve$1;
+	Promise.reject = reject$1;
+
+	Promise.prototype._guidKey = guidKey;
+
+	/**
+	  The primary way of interacting with a promise is through its `then` method,
+	  which registers callbacks to receive either a promise's eventual value or the
+	  reason why the promise cannot be fulfilled.
+
+	  ```js
+	  findUser().then(function(user){
+	    // user is available
+	  }, function(reason){
+	    // user is unavailable, and you are given the reason why
+	  });
+	  ```
+
+	  Chaining
+	  --------
+
+	  The return value of `then` is itself a promise.  This second, 'downstream'
+	  promise is resolved with the return value of the first promise's fulfillment
+	  or rejection handler, or rejected if the handler throws an exception.
+
+	  ```js
+	  findUser().then(function (user) {
+	    return user.name;
+	  }, function (reason) {
+	    return 'default name';
+	  }).then(function (userName) {
+	    // If `findUser` fulfilled, `userName` will be the user's name, otherwise it
+	    // will be `'default name'`
+	  });
+
+	  findUser().then(function (user) {
+	    throw new Error('Found user, but still unhappy');
+	  }, function (reason) {
+	    throw new Error('`findUser` rejected and we\'re unhappy');
+	  }).then(function (value) {
+	    // never reached
+	  }, function (reason) {
+	    // if `findUser` fulfilled, `reason` will be 'Found user, but still unhappy'.
+	    // If `findUser` rejected, `reason` will be '`findUser` rejected and we\'re unhappy'.
+	  });
+	  ```
+	  If the downstream promise does not specify a rejection handler, rejection reasons will be propagated further downstream.
+
+	  ```js
+	  findUser().then(function (user) {
+	    throw new PedagogicalException('Upstream error');
+	  }).then(function (value) {
+	    // never reached
+	  }).then(function (value) {
+	    // never reached
+	  }, function (reason) {
+	    // The `PedgagocialException` is propagated all the way down to here
+	  });
+	  ```
+
+	  Assimilation
+	  ------------
+
+	  Sometimes the value you want to propagate to a downstream promise can only be
+	  retrieved asynchronously. This can be achieved by returning a promise in the
+	  fulfillment or rejection handler. The downstream promise will then be pending
+	  until the returned promise is settled. This is called *assimilation*.
+
+	  ```js
+	  findUser().then(function (user) {
+	    return findCommentsByAuthor(user);
+	  }).then(function (comments) {
+	    // The user's comments are now available
+	  });
+	  ```
+
+	  If the assimliated promise rejects, then the downstream promise will also reject.
+
+	  ```js
+	  findUser().then(function (user) {
+	    return findCommentsByAuthor(user);
+	  }).then(function (comments) {
+	    // If `findCommentsByAuthor` fulfills, we'll have the value here
+	  }, function (reason) {
+	    // If `findCommentsByAuthor` rejects, we'll have the reason here
+	  });
+	  ```
+
+	  Simple Example
+	  --------------
+
+	  Synchronous Example
+
+	  ```javascript
+	  let result;
+
+	  try {
+	    result = findResult();
+	    // success
+	  } catch(reason) {
+	    // failure
+	  }
+	  ```
+
+	  Errback Example
+
+	  ```js
+	  findResult(function(result, err){
+	    if (err) {
+	      // failure
+	    } else {
+	      // success
+	    }
+	  });
+	  ```
+
+	  Promise Example;
+
+	  ```javascript
+	  findResult().then(function(result){
+	    // success
+	  }, function(reason){
+	    // failure
+	  });
+	  ```
+
+	  Advanced Example
+	  --------------
+
+	  Synchronous Example
+
+	  ```javascript
+	  let author, books;
+
+	  try {
+	    author = findAuthor();
+	    books  = findBooksByAuthor(author);
+	    // success
+	  } catch(reason) {
+	    // failure
+	  }
+	  ```
+
+	  Errback Example
+
+	  ```js
+
+	  function foundBooks(books) {
+
+	  }
+
+	  function failure(reason) {
+
+	  }
+
+	  findAuthor(function(author, err){
+	    if (err) {
+	      failure(err);
+	      // failure
+	    } else {
+	      try {
+	        findBoooksByAuthor(author, function(books, err) {
+	          if (err) {
+	            failure(err);
+	          } else {
+	            try {
+	              foundBooks(books);
+	            } catch(reason) {
+	              failure(reason);
+	            }
+	          }
+	        });
+	      } catch(error) {
+	        failure(err);
+	      }
+	      // success
+	    }
+	  });
+	  ```
+
+	  Promise Example;
+
+	  ```javascript
+	  findAuthor().
+	    then(findBooksByAuthor).
+	    then(function(books){
+	      // found books
+	  }).catch(function(reason){
+	    // something went wrong
+	  });
+	  ```
+
+	  @method then
+	  @param {Function} onFulfillment
+	  @param {Function} onRejection
+	  @param {String} label optional string for labeling the promise.
+	  Useful for tooling.
+	  @return {Promise}
+	*/
+	Promise.prototype.then = then;
+
+	function Result() {
+	  this.value = undefined;
+	}
+
+	var ERROR = new Result();
+	var GET_THEN_ERROR$1 = new Result();
+
+	function getThen$1(obj) {
+	  try {
+	    return obj.then;
+	  } catch (error) {
+	    ERROR.value = error;
+	    return ERROR;
+	  }
+	}
+
+	function tryApply(f, s, a) {
+	  try {
+	    f.apply(s, a);
+	  } catch (error) {
+	    ERROR.value = error;
+	    return ERROR;
+	  }
+	}
+
+	function makeObject(_, argumentNames) {
+	  var obj = {};
+	  var length = _.length;
+	  var args = new Array(length);
+
+	  for (var x = 0; x < length; x++) {
+	    args[x] = _[x];
+	  }
+
+	  for (var i = 0; i < argumentNames.length; i++) {
+	    var name = argumentNames[i];
+	    obj[name] = args[i + 1];
+	  }
+
+	  return obj;
+	}
+
+	function arrayResult(_) {
+	  var length = _.length;
+	  var args = new Array(length - 1);
+
+	  for (var i = 1; i < length; i++) {
+	    args[i - 1] = _[i];
+	  }
+
+	  return args;
+	}
+
+	function wrapThenable(then, promise) {
+	  return {
+	    then: function (onFulFillment, onRejection) {
+	      return then.call(promise, onFulFillment, onRejection);
+	    }
+	  };
+	}
+
+	/**
+	  `RSVP.denodeify` takes a 'node-style' function and returns a function that
+	  will return an `RSVP.Promise`. You can use `denodeify` in Node.js or the
+	  browser when you'd prefer to use promises over using callbacks. For example,
+	  `denodeify` transforms the following:
+
+	  ```javascript
+	  let fs = require('fs');
+
+	  fs.readFile('myfile.txt', function(err, data){
+	    if (err) return handleError(err);
+	    handleData(data);
+	  });
+	  ```
+
+	  into:
+
+	  ```javascript
+	  let fs = require('fs');
+	  let readFile = RSVP.denodeify(fs.readFile);
+
+	  readFile('myfile.txt').then(handleData, handleError);
+	  ```
+
+	  If the node function has multiple success parameters, then `denodeify`
+	  just returns the first one:
+
+	  ```javascript
+	  let request = RSVP.denodeify(require('request'));
+
+	  request('http://example.com').then(function(res) {
+	    // ...
+	  });
+	  ```
+
+	  However, if you need all success parameters, setting `denodeify`'s
+	  second parameter to `true` causes it to return all success parameters
+	  as an array:
+
+	  ```javascript
+	  let request = RSVP.denodeify(require('request'), true);
+
+	  request('http://example.com').then(function(result) {
+	    // result[0] -> res
+	    // result[1] -> body
+	  });
+	  ```
+
+	  Or if you pass it an array with names it returns the parameters as a hash:
+
+	  ```javascript
+	  let request = RSVP.denodeify(require('request'), ['res', 'body']);
+
+	  request('http://example.com').then(function(result) {
+	    // result.res
+	    // result.body
+	  });
+	  ```
+
+	  Sometimes you need to retain the `this`:
+
+	  ```javascript
+	  let app = require('express')();
+	  let render = RSVP.denodeify(app.render.bind(app));
+	  ```
+
+	  The denodified function inherits from the original function. It works in all
+	  environments, except IE 10 and below. Consequently all properties of the original
+	  function are available to you. However, any properties you change on the
+	  denodeified function won't be changed on the original function. Example:
+
+	  ```javascript
+	  let request = RSVP.denodeify(require('request')),
+	      cookieJar = request.jar(); // <- Inheritance is used here
+
+	  request('http://example.com', {jar: cookieJar}).then(function(res) {
+	    // cookieJar.cookies holds now the cookies returned by example.com
+	  });
+	  ```
+
+	  Using `denodeify` makes it easier to compose asynchronous operations instead
+	  of using callbacks. For example, instead of:
+
+	  ```javascript
+	  let fs = require('fs');
+
+	  fs.readFile('myfile.txt', function(err, data){
+	    if (err) { ... } // Handle error
+	    fs.writeFile('myfile2.txt', data, function(err){
+	      if (err) { ... } // Handle error
+	      console.log('done')
+	    });
+	  });
+	  ```
+
+	  you can chain the operations together using `then` from the returned promise:
+
+	  ```javascript
+	  let fs = require('fs');
+	  let readFile = RSVP.denodeify(fs.readFile);
+	  let writeFile = RSVP.denodeify(fs.writeFile);
+
+	  readFile('myfile.txt').then(function(data){
+	    return writeFile('myfile2.txt', data);
+	  }).then(function(){
+	    console.log('done')
+	  }).catch(function(error){
+	    // Handle error
+	  });
+	  ```
+
+	  @method denodeify
+	  @static
+	  @for RSVP
+	  @param {Function} nodeFunc a 'node-style' function that takes a callback as
+	  its last argument. The callback expects an error to be passed as its first
+	  argument (if an error occurred, otherwise null), and the value from the
+	  operation as its second argument ('function(err, value){ }').
+	  @param {Boolean|Array} [options] An optional paramter that if set
+	  to `true` causes the promise to fulfill with the callback's success arguments
+	  as an array. This is useful if the node function has multiple success
+	  paramters. If you set this paramter to an array with names, the promise will
+	  fulfill with a hash with these names as keys and the success parameters as
+	  values.
+	  @return {Function} a function that wraps `nodeFunc` to return an
+	  `RSVP.Promise`
+	  @static
+	*/
+	function denodeify(nodeFunc, options) {
+	  var fn = function () {
+	    var self = this;
+	    var l = arguments.length;
+	    var args = new Array(l + 1);
+	    var promiseInput = false;
+
+	    for (var i = 0; i < l; ++i) {
+	      var arg = arguments[i];
+
+	      if (!promiseInput) {
+	        // TODO: clean this up
+	        promiseInput = needsPromiseInput(arg);
+	        if (promiseInput === GET_THEN_ERROR$1) {
+	          var p = new Promise(noop);
+	          reject(p, GET_THEN_ERROR$1.value);
+	          return p;
+	        } else if (promiseInput && promiseInput !== true) {
+	          arg = wrapThenable(promiseInput, arg);
 	        }
+	      }
+	      args[i] = arg;
+	    }
+
+	    var promise = new Promise(noop);
+
+	    args[l] = function (err, val) {
+	      if (err) reject(promise, err);else if (options === undefined) resolve(promise, val);else if (options === true) resolve(promise, arrayResult(arguments));else if (isArray(options)) resolve(promise, makeObject(arguments, options));else resolve(promise, val);
+	    };
+
+	    if (promiseInput) {
+	      return handlePromiseInput(promise, args, nodeFunc, self);
+	    } else {
+	      return handleValueInput(promise, args, nodeFunc, self);
+	    }
+	  };
+
+	  fn.__proto__ = nodeFunc;
+
+	  return fn;
+	}
+
+	function handleValueInput(promise, args, nodeFunc, self) {
+	  var result = tryApply(nodeFunc, self, args);
+	  if (result === ERROR) {
+	    reject(promise, result.value);
+	  }
+	  return promise;
+	}
+
+	function handlePromiseInput(promise, args, nodeFunc, self) {
+	  return Promise.all(args).then(function (args) {
+	    var result = tryApply(nodeFunc, self, args);
+	    if (result === ERROR) {
+	      reject(promise, result.value);
+	    }
+	    return promise;
+	  });
+	}
+
+	function needsPromiseInput(arg) {
+	  if (arg && typeof arg === 'object') {
+	    if (arg.constructor === Promise) {
+	      return true;
+	    } else {
+	      return getThen$1(arg);
+	    }
+	  } else {
+	    return false;
+	  }
+	}
+
+	/**
+	  This is a convenient alias for `RSVP.Promise.all`.
+
+	  @method all
+	  @static
+	  @for RSVP
+	  @param {Array} array Array of promises.
+	  @param {String} label An optional label. This is useful
+	  for tooling.
+	*/
+	function all$1(array, label) {
+	  return Promise.all(array, label);
+	}
+
+	function _possibleConstructorReturn(self, call) { if (!self) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return call && (typeof call === "object" || typeof call === "function") ? call : self; }
+
+	function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+	var AllSettled = function (_Enumerator) {
+	  _inherits(AllSettled, _Enumerator);
+
+	  function AllSettled(Constructor, entries, label) {
+	    return _possibleConstructorReturn(this, _Enumerator.call(this, Constructor, entries, false /* don't abort on reject */, label));
+	  }
+
+	  return AllSettled;
+	}(Enumerator);
+
+	AllSettled.prototype._makeResult = makeSettledResult;
+
+	/**
+	`RSVP.allSettled` is similar to `RSVP.all`, but instead of implementing
+	a fail-fast method, it waits until all the promises have returned and
+	shows you all the results. This is useful if you want to handle multiple
+	promises' failure states together as a set.
+	 Returns a promise that is fulfilled when all the given promises have been
+	settled. The return promise is fulfilled with an array of the states of
+	the promises passed into the `promises` array argument.
+	 Each state object will either indicate fulfillment or rejection, and
+	provide the corresponding value or reason. The states will take one of
+	the following formats:
+	 ```javascript
+	{ state: 'fulfilled', value: value }
+	  or
+	{ state: 'rejected', reason: reason }
+	```
+	 Example:
+	 ```javascript
+	let promise1 = RSVP.Promise.resolve(1);
+	let promise2 = RSVP.Promise.reject(new Error('2'));
+	let promise3 = RSVP.Promise.reject(new Error('3'));
+	let promises = [ promise1, promise2, promise3 ];
+	 RSVP.allSettled(promises).then(function(array){
+	  // array == [
+	  //   { state: 'fulfilled', value: 1 },
+	  //   { state: 'rejected', reason: Error },
+	  //   { state: 'rejected', reason: Error }
+	  // ]
+	  // Note that for the second item, reason.message will be '2', and for the
+	  // third item, reason.message will be '3'.
+	}, function(error) {
+	  // Not run. (This block would only be called if allSettled had failed,
+	  // for instance if passed an incorrect argument type.)
+	});
+	```
+	 @method allSettled
+	@static
+	@for RSVP
+	@param {Array} entries
+	@param {String} label - optional string that describes the promise.
+	Useful for tooling.
+	@return {Promise} promise that is fulfilled with an array of the settled
+	states of the constituent promises.
+	*/
+
+	function allSettled(entries, label) {
+	  if (!isArray(entries)) {
+	    return Promise.reject(new TypeError("Promise.allSettled must be called with an array"), label);
+	  }
+
+	  return new AllSettled(Promise, entries, label).promise;
+	}
+
+	/**
+	  This is a convenient alias for `RSVP.Promise.race`.
+
+	  @method race
+	  @static
+	  @for RSVP
+	  @param {Array} array Array of promises.
+	  @param {String} label An optional label. This is useful
+	  for tooling.
+	 */
+	function race$1(array, label) {
+	  return Promise.race(array, label);
+	}
+
+	function _possibleConstructorReturn$1(self, call) { if (!self) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return call && (typeof call === "object" || typeof call === "function") ? call : self; }
+
+	function _inherits$1(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+	var hasOwnProperty = Object.prototype.hasOwnProperty;
+
+	var PromiseHash = function (_Enumerator) {
+	  _inherits$1(PromiseHash, _Enumerator);
+
+	  function PromiseHash(Constructor, object) {
+	    var abortOnReject = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : true;
+	    var label = arguments[3];
+	    return _possibleConstructorReturn$1(this, _Enumerator.call(this, Constructor, object, abortOnReject, label));
+	  }
+
+	  PromiseHash.prototype._init = function _init(Constructor, object) {
+	    this._result = {};
+
+	    this._enumerate(object);
+	    if (this._remaining === 0) {
+	      fulfill(this.promise, this._result);
+	    }
+	  };
+
+	  PromiseHash.prototype._enumerate = function _enumerate(input) {
+	    var promise = this.promise;
+	    var results = [];
+
+	    for (var key in input) {
+	      if (hasOwnProperty.call(input, key)) {
+	        results.push({
+	          position: key,
+	          entry: input[key]
+	        });
 	      }
 	    }
 
-	    var lib$rsvp$umd$$RSVP = {
-	      'race': lib$rsvp$race$$default,
-	      'Promise': lib$rsvp$promise$$default,
-	      'allSettled': lib$rsvp$all$settled$$default,
-	      'hash': lib$rsvp$hash$$default,
-	      'hashSettled': lib$rsvp$hash$settled$$default,
-	      'denodeify': lib$rsvp$node$$default,
-	      'on': lib$rsvp$$on,
-	      'off': lib$rsvp$$off,
-	      'map': lib$rsvp$map$$default,
-	      'filter': lib$rsvp$filter$$default,
-	      'resolve': lib$rsvp$resolve$$default,
-	      'reject': lib$rsvp$reject$$default,
-	      'all': lib$rsvp$all$$default,
-	      'rethrow': lib$rsvp$rethrow$$default,
-	      'defer': lib$rsvp$defer$$default,
-	      'EventTarget': lib$rsvp$events$$default,
-	      'configure': lib$rsvp$config$$configure,
-	      'async': lib$rsvp$$async
-	    };
+	    var length = results.length;
+	    this._remaining = length;
+	    var result = void 0;
 
-	    /* global define:true module:true window: true */
-	    if ("function" === 'function' && __webpack_require__(12)['amd']) {
-	      !(__WEBPACK_AMD_DEFINE_RESULT__ = function() { return lib$rsvp$umd$$RSVP; }.call(exports, __webpack_require__, exports, module), __WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
-	    } else if (typeof module !== 'undefined' && module['exports']) {
-	      module['exports'] = lib$rsvp$umd$$RSVP;
-	    } else if (typeof lib$rsvp$platform$$default !== 'undefined') {
-	      lib$rsvp$platform$$default['RSVP'] = lib$rsvp$umd$$RSVP;
+	    for (var i = 0; promise._state === PENDING && i < length; i++) {
+	      result = results[i];
+	      this._eachEntry(result.entry, result.position);
 	    }
-	}).call(this);
+	  };
 
+	  return PromiseHash;
+	}(Enumerator);
+
+	/**
+	  `RSVP.hash` is similar to `RSVP.all`, but takes an object instead of an array
+	  for its `promises` argument.
+
+	  Returns a promise that is fulfilled when all the given promises have been
+	  fulfilled, or rejected if any of them become rejected. The returned promise
+	  is fulfilled with a hash that has the same key names as the `promises` object
+	  argument. If any of the values in the object are not promises, they will
+	  simply be copied over to the fulfilled object.
+
+	  Example:
+
+	  ```javascript
+	  let promises = {
+	    myPromise: RSVP.resolve(1),
+	    yourPromise: RSVP.resolve(2),
+	    theirPromise: RSVP.resolve(3),
+	    notAPromise: 4
+	  };
+
+	  RSVP.hash(promises).then(function(hash){
+	    // hash here is an object that looks like:
+	    // {
+	    //   myPromise: 1,
+	    //   yourPromise: 2,
+	    //   theirPromise: 3,
+	    //   notAPromise: 4
+	    // }
+	  });
+	  ````
+
+	  If any of the `promises` given to `RSVP.hash` are rejected, the first promise
+	  that is rejected will be given as the reason to the rejection handler.
+
+	  Example:
+
+	  ```javascript
+	  let promises = {
+	    myPromise: RSVP.resolve(1),
+	    rejectedPromise: RSVP.reject(new Error('rejectedPromise')),
+	    anotherRejectedPromise: RSVP.reject(new Error('anotherRejectedPromise')),
+	  };
+
+	  RSVP.hash(promises).then(function(hash){
+	    // Code here never runs because there are rejected promises!
+	  }, function(reason) {
+	    // reason.message === 'rejectedPromise'
+	  });
+	  ```
+
+	  An important note: `RSVP.hash` is intended for plain JavaScript objects that
+	  are just a set of keys and values. `RSVP.hash` will NOT preserve prototype
+	  chains.
+
+	  Example:
+
+	  ```javascript
+	  function MyConstructor(){
+	    this.example = RSVP.resolve('Example');
+	  }
+
+	  MyConstructor.prototype = {
+	    protoProperty: RSVP.resolve('Proto Property')
+	  };
+
+	  let myObject = new MyConstructor();
+
+	  RSVP.hash(myObject).then(function(hash){
+	    // protoProperty will not be present, instead you will just have an
+	    // object that looks like:
+	    // {
+	    //   example: 'Example'
+	    // }
+	    //
+	    // hash.hasOwnProperty('protoProperty'); // false
+	    // 'undefined' === typeof hash.protoProperty
+	  });
+	  ```
+
+	  @method hash
+	  @static
+	  @for RSVP
+	  @param {Object} object
+	  @param {String} label optional string that describes the promise.
+	  Useful for tooling.
+	  @return {Promise} promise that is fulfilled when all properties of `promises`
+	  have been fulfilled, or rejected if any of them become rejected.
+	*/
+	function hash(object, label) {
+	  if (!isObject(object)) {
+	    return Promise.reject(new TypeError("Promise.hash must be called with an object"), label);
+	  }
+
+	  return new PromiseHash(Promise, object, label).promise;
+	}
+
+	function _possibleConstructorReturn$2(self, call) { if (!self) { throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); } return call && (typeof call === "object" || typeof call === "function") ? call : self; }
+
+	function _inherits$2(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
+
+	var HashSettled = function (_PromiseHash) {
+	  _inherits$2(HashSettled, _PromiseHash);
+
+	  function HashSettled(Constructor, object, label) {
+	    return _possibleConstructorReturn$2(this, _PromiseHash.call(this, Constructor, object, false, label));
+	  }
+
+	  return HashSettled;
+	}(PromiseHash);
+
+	HashSettled.prototype._makeResult = makeSettledResult;
+
+	/**
+	  `RSVP.hashSettled` is similar to `RSVP.allSettled`, but takes an object
+	  instead of an array for its `promises` argument.
+
+	  Unlike `RSVP.all` or `RSVP.hash`, which implement a fail-fast method,
+	  but like `RSVP.allSettled`, `hashSettled` waits until all the
+	  constituent promises have returned and then shows you all the results
+	  with their states and values/reasons. This is useful if you want to
+	  handle multiple promises' failure states together as a set.
+
+	  Returns a promise that is fulfilled when all the given promises have been
+	  settled, or rejected if the passed parameters are invalid.
+
+	  The returned promise is fulfilled with a hash that has the same key names as
+	  the `promises` object argument. If any of the values in the object are not
+	  promises, they will be copied over to the fulfilled object and marked with state
+	  'fulfilled'.
+
+	  Example:
+
+	  ```javascript
+	  let promises = {
+	    myPromise: RSVP.Promise.resolve(1),
+	    yourPromise: RSVP.Promise.resolve(2),
+	    theirPromise: RSVP.Promise.resolve(3),
+	    notAPromise: 4
+	  };
+
+	  RSVP.hashSettled(promises).then(function(hash){
+	    // hash here is an object that looks like:
+	    // {
+	    //   myPromise: { state: 'fulfilled', value: 1 },
+	    //   yourPromise: { state: 'fulfilled', value: 2 },
+	    //   theirPromise: { state: 'fulfilled', value: 3 },
+	    //   notAPromise: { state: 'fulfilled', value: 4 }
+	    // }
+	  });
+	  ```
+
+	  If any of the `promises` given to `RSVP.hash` are rejected, the state will
+	  be set to 'rejected' and the reason for rejection provided.
+
+	  Example:
+
+	  ```javascript
+	  let promises = {
+	    myPromise: RSVP.Promise.resolve(1),
+	    rejectedPromise: RSVP.Promise.reject(new Error('rejection')),
+	    anotherRejectedPromise: RSVP.Promise.reject(new Error('more rejection')),
+	  };
+
+	  RSVP.hashSettled(promises).then(function(hash){
+	    // hash here is an object that looks like:
+	    // {
+	    //   myPromise:              { state: 'fulfilled', value: 1 },
+	    //   rejectedPromise:        { state: 'rejected', reason: Error },
+	    //   anotherRejectedPromise: { state: 'rejected', reason: Error },
+	    // }
+	    // Note that for rejectedPromise, reason.message == 'rejection',
+	    // and for anotherRejectedPromise, reason.message == 'more rejection'.
+	  });
+	  ```
+
+	  An important note: `RSVP.hashSettled` is intended for plain JavaScript objects that
+	  are just a set of keys and values. `RSVP.hashSettled` will NOT preserve prototype
+	  chains.
+
+	  Example:
+
+	  ```javascript
+	  function MyConstructor(){
+	    this.example = RSVP.Promise.resolve('Example');
+	  }
+
+	  MyConstructor.prototype = {
+	    protoProperty: RSVP.Promise.resolve('Proto Property')
+	  };
+
+	  let myObject = new MyConstructor();
+
+	  RSVP.hashSettled(myObject).then(function(hash){
+	    // protoProperty will not be present, instead you will just have an
+	    // object that looks like:
+	    // {
+	    //   example: { state: 'fulfilled', value: 'Example' }
+	    // }
+	    //
+	    // hash.hasOwnProperty('protoProperty'); // false
+	    // 'undefined' === typeof hash.protoProperty
+	  });
+	  ```
+
+	  @method hashSettled
+	  @for RSVP
+	  @param {Object} object
+	  @param {String} label optional string that describes the promise.
+	  Useful for tooling.
+	  @return {Promise} promise that is fulfilled when when all properties of `promises`
+	  have been settled.
+	  @static
+	*/
+
+	function hashSettled(object, label) {
+	  if (!isObject(object)) {
+	    return Promise.reject(new TypeError("RSVP.hashSettled must be called with an object"), label);
+	  }
+
+	  return new HashSettled(Promise, object, false, label).promise;
+	}
+
+	/**
+	  `RSVP.rethrow` will rethrow an error on the next turn of the JavaScript event
+	  loop in order to aid debugging.
+
+	  Promises A+ specifies that any exceptions that occur with a promise must be
+	  caught by the promises implementation and bubbled to the last handler. For
+	  this reason, it is recommended that you always specify a second rejection
+	  handler function to `then`. However, `RSVP.rethrow` will throw the exception
+	  outside of the promise, so it bubbles up to your console if in the browser,
+	  or domain/cause uncaught exception in Node. `rethrow` will also throw the
+	  error again so the error can be handled by the promise per the spec.
+
+	  ```javascript
+	  function throws(){
+	    throw new Error('Whoops!');
+	  }
+
+	  let promise = new RSVP.Promise(function(resolve, reject){
+	    throws();
+	  });
+
+	  promise.catch(RSVP.rethrow).then(function(){
+	    // Code here doesn't run because the promise became rejected due to an
+	    // error!
+	  }, function (err){
+	    // handle the error here
+	  });
+	  ```
+
+	  The 'Whoops' error will be thrown on the next turn of the event loop
+	  and you can watch for it in your console. You can also handle it using a
+	  rejection handler given to `.then` or `.catch` on the returned promise.
+
+	  @method rethrow
+	  @static
+	  @for RSVP
+	  @param {Error} reason reason the promise became rejected.
+	  @throws Error
+	  @static
+	*/
+	function rethrow(reason) {
+	  setTimeout(function () {
+	    throw reason;
+	  });
+	  throw reason;
+	}
+
+	/**
+	  `RSVP.defer` returns an object similar to jQuery's `$.Deferred`.
+	  `RSVP.defer` should be used when porting over code reliant on `$.Deferred`'s
+	  interface. New code should use the `RSVP.Promise` constructor instead.
+
+	  The object returned from `RSVP.defer` is a plain object with three properties:
+
+	  * promise - an `RSVP.Promise`.
+	  * reject - a function that causes the `promise` property on this object to
+	    become rejected
+	  * resolve - a function that causes the `promise` property on this object to
+	    become fulfilled.
+
+	  Example:
+
+	   ```javascript
+	   let deferred = RSVP.defer();
+
+	   deferred.resolve("Success!");
+
+	   deferred.promise.then(function(value){
+	     // value here is "Success!"
+	   });
+	   ```
+
+	  @method defer
+	  @static
+	  @for RSVP
+	  @param {String} label optional string for labeling the promise.
+	  Useful for tooling.
+	  @return {Object}
+	 */
+
+	function defer(label) {
+	  var deferred = { resolve: undefined, reject: undefined };
+
+	  deferred.promise = new Promise(function (resolve, reject) {
+	    deferred.resolve = resolve;
+	    deferred.reject = reject;
+	  }, label);
+
+	  return deferred;
+	}
+
+	/**
+	 `RSVP.map` is similar to JavaScript's native `map` method, except that it
+	  waits for all promises to become fulfilled before running the `mapFn` on
+	  each item in given to `promises`. `RSVP.map` returns a promise that will
+	  become fulfilled with the result of running `mapFn` on the values the promises
+	  become fulfilled with.
+
+	  For example:
+
+	  ```javascript
+
+	  let promise1 = RSVP.resolve(1);
+	  let promise2 = RSVP.resolve(2);
+	  let promise3 = RSVP.resolve(3);
+	  let promises = [ promise1, promise2, promise3 ];
+
+	  let mapFn = function(item){
+	    return item + 1;
+	  };
+
+	  RSVP.map(promises, mapFn).then(function(result){
+	    // result is [ 2, 3, 4 ]
+	  });
+	  ```
+
+	  If any of the `promises` given to `RSVP.map` are rejected, the first promise
+	  that is rejected will be given as an argument to the returned promise's
+	  rejection handler. For example:
+
+	  ```javascript
+	  let promise1 = RSVP.resolve(1);
+	  let promise2 = RSVP.reject(new Error('2'));
+	  let promise3 = RSVP.reject(new Error('3'));
+	  let promises = [ promise1, promise2, promise3 ];
+
+	  let mapFn = function(item){
+	    return item + 1;
+	  };
+
+	  RSVP.map(promises, mapFn).then(function(array){
+	    // Code here never runs because there are rejected promises!
+	  }, function(reason) {
+	    // reason.message === '2'
+	  });
+	  ```
+
+	  `RSVP.map` will also wait if a promise is returned from `mapFn`. For example,
+	  say you want to get all comments from a set of blog posts, but you need
+	  the blog posts first because they contain a url to those comments.
+
+	  ```javscript
+
+	  let mapFn = function(blogPost){
+	    // getComments does some ajax and returns an RSVP.Promise that is fulfilled
+	    // with some comments data
+	    return getComments(blogPost.comments_url);
+	  };
+
+	  // getBlogPosts does some ajax and returns an RSVP.Promise that is fulfilled
+	  // with some blog post data
+	  RSVP.map(getBlogPosts(), mapFn).then(function(comments){
+	    // comments is the result of asking the server for the comments
+	    // of all blog posts returned from getBlogPosts()
+	  });
+	  ```
+
+	  @method map
+	  @static
+	  @for RSVP
+	  @param {Array} promises
+	  @param {Function} mapFn function to be called on each fulfilled promise.
+	  @param {String} label optional string for labeling the promise.
+	  Useful for tooling.
+	  @return {Promise} promise that is fulfilled with the result of calling
+	  `mapFn` on each fulfilled promise or value when they become fulfilled.
+	   The promise will be rejected if any of the given `promises` become rejected.
+	  @static
+	*/
+	function map(promises, mapFn, label) {
+	  if (!isArray(promises)) {
+	    return Promise.reject(new TypeError("RSVP.map must be called with an array"), label);
+	  }
+
+	  if (!isFunction(mapFn)) {
+	    return Promise.reject(new TypeError("RSVP.map expects a function as a second argument"), label);
+	  }
+
+	  return Promise.all(promises, label).then(function (values) {
+	    var length = values.length;
+	    var results = new Array(length);
+
+	    for (var i = 0; i < length; i++) {
+	      results[i] = mapFn(values[i]);
+	    }
+
+	    return Promise.all(results, label);
+	  });
+	}
+
+	/**
+	  This is a convenient alias for `RSVP.Promise.resolve`.
+
+	  @method resolve
+	  @static
+	  @for RSVP
+	  @param {*} value value that the returned promise will be resolved with
+	  @param {String} label optional string for identifying the returned promise.
+	  Useful for tooling.
+	  @return {Promise} a promise that will become fulfilled with the given
+	  `value`
+	*/
+	function resolve$2(value, label) {
+	  return Promise.resolve(value, label);
+	}
+
+	/**
+	  This is a convenient alias for `RSVP.Promise.reject`.
+
+	  @method reject
+	  @static
+	  @for RSVP
+	  @param {*} reason value that the returned promise will be rejected with.
+	  @param {String} label optional string for identifying the returned promise.
+	  Useful for tooling.
+	  @return {Promise} a promise rejected with the given `reason`.
+	*/
+	function reject$2(reason, label) {
+	  return Promise.reject(reason, label);
+	}
+
+	/**
+	 `RSVP.filter` is similar to JavaScript's native `filter` method, except that it
+	  waits for all promises to become fulfilled before running the `filterFn` on
+	  each item in given to `promises`. `RSVP.filter` returns a promise that will
+	  become fulfilled with the result of running `filterFn` on the values the
+	  promises become fulfilled with.
+
+	  For example:
+
+	  ```javascript
+
+	  let promise1 = RSVP.resolve(1);
+	  let promise2 = RSVP.resolve(2);
+	  let promise3 = RSVP.resolve(3);
+
+	  let promises = [promise1, promise2, promise3];
+
+	  let filterFn = function(item){
+	    return item > 1;
+	  };
+
+	  RSVP.filter(promises, filterFn).then(function(result){
+	    // result is [ 2, 3 ]
+	  });
+	  ```
+
+	  If any of the `promises` given to `RSVP.filter` are rejected, the first promise
+	  that is rejected will be given as an argument to the returned promise's
+	  rejection handler. For example:
+
+	  ```javascript
+	  let promise1 = RSVP.resolve(1);
+	  let promise2 = RSVP.reject(new Error('2'));
+	  let promise3 = RSVP.reject(new Error('3'));
+	  let promises = [ promise1, promise2, promise3 ];
+
+	  let filterFn = function(item){
+	    return item > 1;
+	  };
+
+	  RSVP.filter(promises, filterFn).then(function(array){
+	    // Code here never runs because there are rejected promises!
+	  }, function(reason) {
+	    // reason.message === '2'
+	  });
+	  ```
+
+	  `RSVP.filter` will also wait for any promises returned from `filterFn`.
+	  For instance, you may want to fetch a list of users then return a subset
+	  of those users based on some asynchronous operation:
+
+	  ```javascript
+
+	  let alice = { name: 'alice' };
+	  let bob   = { name: 'bob' };
+	  let users = [ alice, bob ];
+
+	  let promises = users.map(function(user){
+	    return RSVP.resolve(user);
+	  });
+
+	  let filterFn = function(user){
+	    // Here, Alice has permissions to create a blog post, but Bob does not.
+	    return getPrivilegesForUser(user).then(function(privs){
+	      return privs.can_create_blog_post === true;
+	    });
+	  };
+	  RSVP.filter(promises, filterFn).then(function(users){
+	    // true, because the server told us only Alice can create a blog post.
+	    users.length === 1;
+	    // false, because Alice is the only user present in `users`
+	    users[0] === bob;
+	  });
+	  ```
+
+	  @method filter
+	  @static
+	  @for RSVP
+	  @param {Array} promises
+	  @param {Function} filterFn - function to be called on each resolved value to
+	  filter the final results.
+	  @param {String} label optional string describing the promise. Useful for
+	  tooling.
+	  @return {Promise}
+	*/
+
+	function resolveAll(promises, label) {
+	  return Promise.all(promises, label);
+	}
+
+	function resolveSingle(promise, label) {
+	  return Promise.resolve(promise, label).then(function (promises) {
+	    return resolveAll(promises, label);
+	  });
+	}
+
+	function filter(promises, filterFn, label) {
+	  if (!isArray(promises) && !(isObject(promises) && promises.then !== undefined)) {
+	    return Promise.reject(new TypeError("RSVP.filter must be called with an array or promise"), label);
+	  }
+
+	  if (!isFunction(filterFn)) {
+	    return Promise.reject(new TypeError("RSVP.filter expects function as a second argument"), label);
+	  }
+
+	  var promise = isArray(promises) ? resolveAll(promises, label) : resolveSingle(promises, label);
+	  return promise.then(function (values) {
+	    var length = values.length;
+	    var filtered = new Array(length);
+
+	    for (var i = 0; i < length; i++) {
+	      filtered[i] = filterFn(values[i]);
+	    }
+
+	    return resolveAll(filtered, label).then(function (filtered) {
+	      var results = new Array(length);
+	      var newLength = 0;
+
+	      for (var _i = 0; _i < length; _i++) {
+	        if (filtered[_i]) {
+	          results[newLength] = values[_i];
+	          newLength++;
+	        }
+	      }
+
+	      results.length = newLength;
+
+	      return results;
+	    });
+	  });
+	}
+
+	var len = 0;
+	var vertxNext = void 0;
+	function asap(callback, arg) {
+	  queue$1[len] = callback;
+	  queue$1[len + 1] = arg;
+	  len += 2;
+	  if (len === 2) {
+	    // If len is 1, that means that we need to schedule an async flush.
+	    // If additional callbacks are queued before the queue is flushed, they
+	    // will be processed by this flush that we are scheduling.
+	    scheduleFlush$1();
+	  }
+	}
+
+	var browserWindow = typeof window !== 'undefined' ? window : undefined;
+	var browserGlobal = browserWindow || {};
+	var BrowserMutationObserver = browserGlobal.MutationObserver || browserGlobal.WebKitMutationObserver;
+	var isNode = typeof self === 'undefined' && typeof process !== 'undefined' && {}.toString.call(process) === '[object process]';
+
+	// test for web worker but not in IE10
+	var isWorker = typeof Uint8ClampedArray !== 'undefined' && typeof importScripts !== 'undefined' && typeof MessageChannel !== 'undefined';
+
+	// node
+	function useNextTick() {
+	  var nextTick = process.nextTick;
+	  // node version 0.10.x displays a deprecation warning when nextTick is used recursively
+	  // setImmediate should be used instead instead
+	  var version = process.versions.node.match(/^(?:(\d+)\.)?(?:(\d+)\.)?(\*|\d+)$/);
+	  if (Array.isArray(version) && version[1] === '0' && version[2] === '10') {
+	    nextTick = setImmediate;
+	  }
+	  return function () {
+	    return nextTick(flush);
+	  };
+	}
+
+	// vertx
+	function useVertxTimer() {
+	  if (typeof vertxNext !== 'undefined') {
+	    return function () {
+	      vertxNext(flush);
+	    };
+	  }
+	  return useSetTimeout();
+	}
+
+	function useMutationObserver() {
+	  var iterations = 0;
+	  var observer = new BrowserMutationObserver(flush);
+	  var node = document.createTextNode('');
+	  observer.observe(node, { characterData: true });
+
+	  return function () {
+	    return node.data = iterations = ++iterations % 2;
+	  };
+	}
+
+	// web worker
+	function useMessageChannel() {
+	  var channel = new MessageChannel();
+	  channel.port1.onmessage = flush;
+	  return function () {
+	    return channel.port2.postMessage(0);
+	  };
+	}
+
+	function useSetTimeout() {
+	  return function () {
+	    return setTimeout(flush, 1);
+	  };
+	}
+
+	var queue$1 = new Array(1000);
+
+	function flush() {
+	  for (var i = 0; i < len; i += 2) {
+	    var callback = queue$1[i];
+	    var arg = queue$1[i + 1];
+
+	    callback(arg);
+
+	    queue$1[i] = undefined;
+	    queue$1[i + 1] = undefined;
+	  }
+
+	  len = 0;
+	}
+
+	function attemptVertex() {
+	  try {
+	    var r = require;
+	    var vertx = __webpack_require__(9);
+	    vertxNext = vertx.runOnLoop || vertx.runOnContext;
+	    return useVertxTimer();
+	  } catch (e) {
+	    return useSetTimeout();
+	  }
+	}
+
+	var scheduleFlush$1 = void 0;
+	// Decide what async method to use to triggering processing of queued callbacks:
+	if (isNode) {
+	  scheduleFlush$1 = useNextTick();
+	} else if (BrowserMutationObserver) {
+	  scheduleFlush$1 = useMutationObserver();
+	} else if (isWorker) {
+	  scheduleFlush$1 = useMessageChannel();
+	} else if (browserWindow === undefined && "function" === 'function') {
+	  scheduleFlush$1 = attemptVertex();
+	} else {
+	  scheduleFlush$1 = useSetTimeout();
+	}
+
+	var platform = void 0;
+
+	/* global self */
+	if (typeof self === 'object') {
+	  platform = self;
+
+	  /* global global */
+	} else if (typeof global === 'object') {
+	  platform = global;
+	} else {
+	  throw new Error('no global: `self` or `global` found');
+	}
+
+	var _asap$cast$Promise$Ev;
+
+	function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
+
+	// defaults
+	config.async = asap;
+	config.after = function (cb) {
+	  return setTimeout(cb, 0);
+	};
+	var cast = resolve$2;
+
+	var async = function (callback, arg) {
+	  return config.async(callback, arg);
+	};
+
+	function on() {
+	  config['on'].apply(config, arguments);
+	}
+
+	function off() {
+	  config['off'].apply(config, arguments);
+	}
+
+	// Set up instrumentation through `window.__PROMISE_INTRUMENTATION__`
+	if (typeof window !== 'undefined' && typeof window['__PROMISE_INSTRUMENTATION__'] === 'object') {
+	  var callbacks = window['__PROMISE_INSTRUMENTATION__'];
+	  configure('instrument', true);
+	  for (var eventName in callbacks) {
+	    if (callbacks.hasOwnProperty(eventName)) {
+	      on(eventName, callbacks[eventName]);
+	    }
+	  }
+	}
+
+	// the default export here is for backwards compat:
+	//   https://github.com/tildeio/rsvp.js/issues/434
+	var rsvp = (_asap$cast$Promise$Ev = {
+	  asap: asap,
+	  cast: cast,
+	  Promise: Promise,
+	  EventTarget: EventTarget,
+	  all: all$1,
+	  allSettled: allSettled,
+	  race: race$1,
+	  hash: hash,
+	  hashSettled: hashSettled,
+	  rethrow: rethrow,
+	  defer: defer,
+	  denodeify: denodeify,
+	  configure: configure,
+	  on: on,
+	  off: off,
+	  resolve: resolve$2,
+	  reject: reject$2,
+	  map: map
+	}, _defineProperty(_asap$cast$Promise$Ev, 'async', async), _defineProperty(_asap$cast$Promise$Ev, 'filter', filter), _asap$cast$Promise$Ev);
+
+	exports['default'] = rsvp;
+	exports.asap = asap;
+	exports.cast = cast;
+	exports.Promise = Promise;
+	exports.EventTarget = EventTarget;
+	exports.all = all$1;
+	exports.allSettled = allSettled;
+	exports.race = race$1;
+	exports.hash = hash;
+	exports.hashSettled = hashSettled;
+	exports.rethrow = rethrow;
+	exports.defer = defer;
+	exports.denodeify = denodeify;
+	exports.configure = configure;
+	exports.on = on;
+	exports.off = off;
+	exports.resolve = resolve$2;
+	exports.reject = reject$2;
+	exports.map = map;
+	exports.async = async;
+	exports.filter = filter;
+
+	Object.defineProperty(exports, '__esModule', { value: true });
+
+	})));
+
+	//# sourceMappingURL=rsvp.map
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(11), (function() { return this; }()), __webpack_require__(13)(module)))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(11), (function() { return this; }())))
 
 /***/ },
 /* 7 */
@@ -22016,7 +24290,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	//fs=require('fs');
 	//lamejs();
 	module.exports = lamejs;
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(14).Buffer))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(12).Buffer))
 
 /***/ },
 /* 9 */
@@ -22184,29 +24458,6 @@ return /******/ (function(modules) { // webpackBootstrap
 /* 12 */
 /***/ function(module, exports, __webpack_require__) {
 
-	module.exports = function() { throw new Error("define cannot be used indirect"); };
-
-
-/***/ },
-/* 13 */
-/***/ function(module, exports, __webpack_require__) {
-
-	module.exports = function(module) {
-		if(!module.webpackPolyfill) {
-			module.deprecate = function() {};
-			module.paths = [];
-			// module.parent = undefined by default
-			module.children = [];
-			module.webpackPolyfill = 1;
-		}
-		return module;
-	}
-
-
-/***/ },
-/* 14 */
-/***/ function(module, exports, __webpack_require__) {
-
 	/* WEBPACK VAR INJECTION */(function(Buffer, global) {/*!
 	 * The buffer module from node.js, for the browser.
 	 *
@@ -22215,9 +24466,11 @@ return /******/ (function(modules) { // webpackBootstrap
 	 */
 	/* eslint-disable no-proto */
 
-	var base64 = __webpack_require__(17)
-	var ieee754 = __webpack_require__(15)
-	var isArray = __webpack_require__(16)
+	'use strict'
+
+	var base64 = __webpack_require__(15)
+	var ieee754 = __webpack_require__(13)
+	var isArray = __webpack_require__(14)
 
 	exports.Buffer = Buffer
 	exports.SlowBuffer = SlowBuffer
@@ -22297,8 +24550,10 @@ return /******/ (function(modules) { // webpackBootstrap
 	    return new Buffer(arg)
 	  }
 
-	  this.length = 0
-	  this.parent = undefined
+	  if (!Buffer.TYPED_ARRAY_SUPPORT) {
+	    this.length = 0
+	    this.parent = undefined
+	  }
 
 	  // Common case.
 	  if (typeof arg === 'number') {
@@ -22429,6 +24684,10 @@ return /******/ (function(modules) { // webpackBootstrap
 	if (Buffer.TYPED_ARRAY_SUPPORT) {
 	  Buffer.prototype.__proto__ = Uint8Array.prototype
 	  Buffer.__proto__ = Uint8Array
+	} else {
+	  // pre-set for values that may exist in the future
+	  Buffer.prototype.length = undefined
+	  Buffer.prototype.parent = undefined
 	}
 
 	function allocate (that, length) {
@@ -22578,10 +24837,6 @@ return /******/ (function(modules) { // webpackBootstrap
 	  }
 	}
 	Buffer.byteLength = byteLength
-
-	// pre-set for values that may exist in the future
-	Buffer.prototype.length = undefined
-	Buffer.prototype.parent = undefined
 
 	function slowToString (encoding, start, end) {
 	  var loweredCase = false
@@ -23752,15 +26007,15 @@ return /******/ (function(modules) { // webpackBootstrap
 	  return i
 	}
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(14).Buffer, (function() { return this; }())))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(12).Buffer, (function() { return this; }())))
 
 /***/ },
-/* 15 */
+/* 13 */
 /***/ function(module, exports, __webpack_require__) {
 
 	exports.read = function (buffer, offset, isLE, mLen, nBytes) {
 	  var e, m
-	  var eLen = nBytes * 8 - mLen - 1
+	  var eLen = (nBytes * 8) - mLen - 1
 	  var eMax = (1 << eLen) - 1
 	  var eBias = eMax >> 1
 	  var nBits = -7
@@ -23773,12 +26028,12 @@ return /******/ (function(modules) { // webpackBootstrap
 	  e = s & ((1 << (-nBits)) - 1)
 	  s >>= (-nBits)
 	  nBits += eLen
-	  for (; nBits > 0; e = e * 256 + buffer[offset + i], i += d, nBits -= 8) {}
+	  for (; nBits > 0; e = (e * 256) + buffer[offset + i], i += d, nBits -= 8) {}
 
 	  m = e & ((1 << (-nBits)) - 1)
 	  e >>= (-nBits)
 	  nBits += mLen
-	  for (; nBits > 0; m = m * 256 + buffer[offset + i], i += d, nBits -= 8) {}
+	  for (; nBits > 0; m = (m * 256) + buffer[offset + i], i += d, nBits -= 8) {}
 
 	  if (e === 0) {
 	    e = 1 - eBias
@@ -23793,7 +26048,7 @@ return /******/ (function(modules) { // webpackBootstrap
 
 	exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
 	  var e, m, c
-	  var eLen = nBytes * 8 - mLen - 1
+	  var eLen = (nBytes * 8) - mLen - 1
 	  var eMax = (1 << eLen) - 1
 	  var eBias = eMax >> 1
 	  var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0)
@@ -23826,7 +26081,7 @@ return /******/ (function(modules) { // webpackBootstrap
 	      m = 0
 	      e = eMax
 	    } else if (e + eBias >= 1) {
-	      m = (value * c - 1) * Math.pow(2, mLen)
+	      m = ((value * c) - 1) * Math.pow(2, mLen)
 	      e = e + eBias
 	    } else {
 	      m = value * Math.pow(2, eBias - 1) * Math.pow(2, mLen)
@@ -23845,46 +26100,18 @@ return /******/ (function(modules) { // webpackBootstrap
 
 
 /***/ },
-/* 16 */
+/* 14 */
 /***/ function(module, exports, __webpack_require__) {
 
-	
-	/**
-	 * isArray
-	 */
+	var toString = {}.toString;
 
-	var isArray = Array.isArray;
-
-	/**
-	 * toString
-	 */
-
-	var str = Object.prototype.toString;
-
-	/**
-	 * Whether or not the given `val`
-	 * is an array.
-	 *
-	 * example:
-	 *
-	 *        isArray([]);
-	 *        // > true
-	 *        isArray(arguments);
-	 *        // > false
-	 *        isArray('');
-	 *        // > false
-	 *
-	 * @param {mixed} val
-	 * @return {bool}
-	 */
-
-	module.exports = isArray || function (val) {
-	  return !! val && '[object Array]' == str.call(val);
+	module.exports = Array.isArray || function (arr) {
+	  return toString.call(arr) == '[object Array]';
 	};
 
 
 /***/ },
-/* 17 */
+/* 15 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
