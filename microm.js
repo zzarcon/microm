@@ -179,7 +179,7 @@ class Microm {
   }
 
   startUserMedia(stream) {
-    var recordRTC = RecordRTC(stream, {type: 'audio'})
+    var recordRTC = RecordRTC(stream, {type: 'audio', recorderType: RecordRTC.StereoAudioRecorder});
     recordRTC.startRecording();
       
     this.recordRTC = recordRTC;
@@ -188,8 +188,8 @@ class Microm {
     return stream;
   }
 
-  onUserMediaError() {
-    // TODO: Handle recording error
+  onUserMediaError(e) {
+    console.log(e);
   }
 
   /**
