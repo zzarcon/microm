@@ -1,3 +1,7 @@
+<h1 align=center>
+<img src="logo/1024 logotype.png" width=50%>
+</h1>
+
 [![Build Status](https://travis-ci.org/zzarcon/microm.svg)](https://travis-ci.org/zzarcon/microm)
 [![npm version](https://badge.fury.io/js/microm.svg)](https://badge.fury.io/js/microm)
 [![Bower version](https://badge.fury.io/bo/microm.svg)](http://badge.fury.io/bo/microm)
